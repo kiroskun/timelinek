@@ -21,6 +21,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:ital,wght@0,600;0,700;1,700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
@@ -233,49 +234,99 @@ const SUPABASE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSI
 const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
 
 // ═══ SOUND SYSTEM ═══
-// 用 Web Audio API 程序化生成音色，无外部依赖
+// 用 Web Audio API 程序化生成有辨识度的多音色旋律
 const SOUND_CONFIG_KEY="tlk_sound_v1";
 function getSoundConfig(){
   try{const r=localStorage.getItem(SOUND_CONFIG_KEY);return r?JSON.parse(r):{enabled:true,volume:0.5,muteUntil:0};}catch{return{enabled:true,volume:0.5,muteUntil:0};}
 }
 function setSoundConfig(c){try{localStorage.setItem(SOUND_CONFIG_KEY,JSON.stringify(c));}catch{}}
+
+// ═══ 每日复盘配置 ═══
+const REVIEW_CONFIG_KEY="tlk_review_v1";
+function getReviewConfig(){
+  try{const r=localStorage.getItem(REVIEW_CONFIG_KEY);return r?JSON.parse(r):{autoDaily:false,dailyTime:"21:30",lastDailyAt:""};}catch{return{autoDaily:false,dailyTime:"21:30",lastDailyAt:""};}
+}
+function setReviewConfig(c){try{localStorage.setItem(REVIEW_CONFIG_KEY,JSON.stringify(c));}catch{}}
 let _audioCtx=null;
 function getAudioCtx(){
   if(_audioCtx)return _audioCtx;
   try{_audioCtx=new(window.AudioContext||window.webkitAudioContext)();return _audioCtx;}catch{return null;}
 }
-function playTone(freqs,duration=0.18,type="sine",volume=null){
+// 单个音符播放（带 ADSR 包络）
+function playNote(ctx,t0,freq,duration,type,volume,detune=0){
+  const osc=ctx.createOscillator();
+  const gain=ctx.createGain();
+  osc.type=type;
+  osc.frequency.setValueAtTime(freq,t0);
+  if(detune)osc.detune.setValueAtTime(detune,t0);
+  gain.gain.setValueAtTime(0,t0);
+  gain.gain.linearRampToValueAtTime(volume,t0+0.01);
+  gain.gain.exponentialRampToValueAtTime(volume*0.6,t0+duration*0.5);
+  gain.gain.exponentialRampToValueAtTime(0.0001,t0+duration);
+  osc.connect(gain);gain.connect(ctx.destination);
+  osc.start(t0);
+  osc.stop(t0+duration+0.02);
+}
+// 播放多音符旋律：notes = [{f, d, t, type, gap}]
+function playMelody(notes){
   const cfg=getSoundConfig();
   if(!cfg.enabled||Date.now()<cfg.muteUntil)return;
   const ctx=getAudioCtx();if(!ctx)return;
-  // iOS Safari 等浏览器要求用户交互后才能 resume
-  if(ctx.state==="suspended"){ctx.resume().catch(()=>{});}
-  const vol=(volume!=null?volume:cfg.volume)*0.4; // 整体降一档防过响
-  const arr=Array.isArray(freqs)?freqs:[freqs];
-  arr.forEach((f,i)=>{
-    const t=ctx.currentTime+i*0.06;
-    const osc=ctx.createOscillator();
-    const gain=ctx.createGain();
-    osc.type=type;
-    osc.frequency.setValueAtTime(f,t);
-    gain.gain.setValueAtTime(0,t);
-    gain.gain.linearRampToValueAtTime(vol,t+0.01);
-    gain.gain.exponentialRampToValueAtTime(0.0001,t+duration);
-    osc.connect(gain);gain.connect(ctx.destination);
-    osc.start(t);
-    osc.stop(t+duration+0.02);
-  });
+  if(ctx.state==="suspended")ctx.resume().catch(()=>{});
+  const baseVol=cfg.volume*0.35;
+  let t=ctx.currentTime+0.005;
+  for(const n of notes){
+    const dur=n.d||0.16;
+    playNote(ctx,t,n.f,dur,n.type||"sine",baseVol*(n.v||1),n.detune||0);
+    // 部分音符加叠加（双八度增厚）
+    if(n.harmonic){
+      playNote(ctx,t,n.f*2,dur*0.7,n.type||"sine",baseVol*0.3*(n.v||1),n.detune||0);
+    }
+    t+=n.gap||(dur*0.7);
+  }
 }
-// 五种场景音色
+
+// 5 个有辨识度的旋律 + 1 个测试音
 const SOUNDS={
-  taskDone:()=>playTone([523.25,659.25,783.99],0.16,"sine"), // C5-E5-G5 上行三和弦（清脆完成感）
-  taskStart:()=>playTone([440,554.37],0.14,"sine"), // A4-C#5（柔和起笔）
-  taskRemind:()=>playTone([880,880],0.12,"triangle"), // 双 A5（提醒铃声）
-  pomoStart:()=>playTone([392,523.25,659.25],0.18,"triangle"), // G4-C5-E5（番茄起航）
-  pomoEnd:()=>playTone([783.99,587.33,392],0.22,"sine"), // G5-D5-G4 下行（番茄结束放松）
-  testBeep:()=>playTone([660],0.12,"sine"), // 测试音
+  // ✅ 任务完成：清脆水滴风（高音 + 反弹效果）→ 庆祝感
+  taskDone:()=>playMelody([
+    {f:1046.50,d:0.06,gap:0.04,type:"sine",harmonic:true}, // C6
+    {f:1318.51,d:0.06,gap:0.04,type:"sine"}, // E6
+    {f:1567.98,d:0.18,gap:0.18,type:"sine",v:1.1,harmonic:true}, // G6 长亮
+    {f:2093.00,d:0.10,gap:0,type:"triangle",v:0.6}, // C7 高亮点缀
+  ]),
+  // ▶ 开始计时：木鱼/敲击风（低中音 + 短促）→ 启动感
+  taskStart:()=>playMelody([
+    {f:329.63,d:0.08,gap:0.05,type:"triangle",v:1}, // E4
+    {f:493.88,d:0.06,gap:0.04,type:"triangle",v:0.9}, // B4
+    {f:659.25,d:0.20,gap:0,type:"sine",v:1.1,harmonic:true}, // E5 长亮
+  ]),
+  // 🔔 任务提醒：双音招呼铃（撞钟感 + 间隔）→ 引人注意
+  taskRemind:()=>playMelody([
+    {f:880,d:0.18,gap:0.20,type:"square",v:0.5,harmonic:true}, // A5 一声
+    {f:880,d:0.18,gap:0.16,type:"square",v:0.5,harmonic:true}, // A5 重复
+    {f:1108.73,d:0.30,gap:0,type:"square",v:0.6,harmonic:true}, // C#6 收尾长音
+  ]),
+  // 🍅 番茄起航：上扬号角风（5 音上行旋律）→ 出发感
+  pomoStart:()=>playMelody([
+    {f:261.63,d:0.10,gap:0.08,type:"sawtooth",v:0.5}, // C4
+    {f:329.63,d:0.10,gap:0.08,type:"sawtooth",v:0.6}, // E4
+    {f:392,d:0.10,gap:0.08,type:"sawtooth",v:0.7}, // G4
+    {f:523.25,d:0.10,gap:0.08,type:"sawtooth",v:0.8}, // C5
+    {f:659.25,d:0.30,gap:0,type:"sine",v:1,harmonic:true}, // E5 收尾光辉
+  ]),
+  // 🎉 番茄结束：温柔下行结束音（4 音下行，柔和泛音）→ 完成放松
+  pomoEnd:()=>playMelody([
+    {f:1046.50,d:0.16,gap:0.14,type:"sine",harmonic:true}, // C6
+    {f:880,d:0.16,gap:0.14,type:"sine",harmonic:true}, // A5
+    {f:783.99,d:0.16,gap:0.14,type:"sine",harmonic:true}, // G5
+    {f:523.25,d:0.45,gap:0,type:"sine",v:1.1,harmonic:true}, // C5 回家
+  ]),
+  testBeep:()=>playMelody([
+    {f:880,d:0.10,gap:0.06,type:"sine"},
+    {f:1108.73,d:0.16,gap:0,type:"sine",harmonic:true},
+  ]),
 };
-// 暴露给所有组件用
 window.__playSound=(name)=>{const fn=SOUNDS[name];if(fn)fn();};
 
 // ═══ AI Configuration ═══
@@ -452,87 +503,554 @@ function fmtMin(m){if(m==null||isNaN(m))return"";m=Math.round(m);if(m<60)return 
 
 // ═══ AI: 智能排今日 ═══
 // 输入今日所有任务 → 调用 AI → 返回带建议时间和理由的排序
-async function aiPlanToday(tasks,catOf,projOf){
-  // 简化数据，只发必要字段（节省 tokens）
-  const taskList=tasks.map((t,i)=>{
-    const c=catOf(t.category);
-    const p=t.projectId?projOf(t.projectId):null;
-    return{
-      i:i+1,
-      id:t.id,
-      title:t.title,
-      cat:c?.name||"",
-      proj:p?.name||"",
-      priority:t.priority,
-      duration:t.duration?Number(t.duration):null,
-      done:!!t.done,
-      timeStart:t.timeStart||"",
-      timeEnd:t.timeEnd||"",
-      content:(t.content||"").slice(0,80),
-    };
-  }).filter(t=>!t.done);
-  if(taskList.length===0)throw new Error("今日没有未完成的任务");
-  const now=new Date();
-  const curHour=String(now.getHours()).padStart(2,"0")+":"+String(now.getMinutes()).padStart(2,"0");
-  const prompt=`你是一个高效的个人时间规划助手。我今天有以下未完成的任务：
+// ═══ AI 智能解析任务文本 ═══
+// 输入自然语言（如"3天后下午6点和小王聚餐 1.5h 重要"），返回结构化字段
+async function aiParseTask(text,today,catsList,projectsList){
+  const catNames=(catsList||[]).map(c=>c.name).join(" / ")||"工作 / 学习 / 生活";
+  const projNames=(projectsList||[]).filter(p=>p.startDate&&p.endDate&&p.startDate<=today&&today<=p.endDate).map(p=>p.name).join(" / ");
+  const prompt=`请把下面的自然语言任务描述解析为结构化数据。今天是 ${today}。
 
-${taskList.map(t=>`[#${t.i}] 【${t.priority}】"${t.title}" 分类:${t.cat}${t.proj?` 项目:${t.proj}`:""}${t.duration?` 预计:${t.duration}分钟`:""}${t.timeStart?` 已设定:${t.timeStart}-${t.timeEnd||"?"}`:""}${t.content?` 备注:${t.content}`:""}`).join("\n")}
+输入："${text}"
 
-当前时间: ${curHour}
+可用分类：${catNames}
+${projNames?`正在进行的项目：${projNames}\n`:""}
+解析要求：
+- title: 简洁的任务标题（去掉时间、日期、时长这些信息，只保留事件本身）
+- due: 截止日期 YYYY-MM-DD 格式。"今天"=${today}，"明天"="${addDays(today,1)}"，"3天后"=今天+3天，"下周一/二.."等也要正确解析。无法判断时返回空字符串
+- timeStart: 开始时间 HH:MM 格式（24 小时制），如"下午6点"="18:00"。无则空
+- timeEnd: 结束时间 HH:MM。无则空
+- duration: 预计分钟数（数字）。"1小时半"=90，"2小时"=120。无则空
+- priority: 优先级 "高" / "中" / "低"。包含"重要/紧急/紧迫"=高，"可选/有空/不急"=低，其他=中
+- category: 从可用分类中**选一个最匹配**的分类名。如"开会/汇报/工作"→工作，"看书/学习"→学习，"聚餐/购物"→生活
+- project: 如果输入暗示某个进行中项目，返回项目名。否则空
+- content: 备注信息（如"@王总"、"在咖啡店"），无则空
 
-请帮我合理排序这些任务（已设定固定时间的任务保持不动），并给出每个任务的建议开始时间。
-
-要求：
-1. 高优先级 + 上午精力好的时段，安排重要/创造性任务
-2. 下午低能量时段，安排沟通/事务性任务
-3. 任务之间留 5-10 分钟缓冲
-4. 一段简短的整体策略说明（≤80字）
-5. 每个任务给出：建议开始时间、一句话理由（≤25字）
-6. 必须为上面所有 ${taskList.length} 项任务都给出排期建议，缺一不可
-
-严格按以下 JSON 格式返回，不要任何其他文字、不要 markdown 包裹：
-{
-  "summary": "整体策略说明",
-  "plan": [
-    {"i": 任务编号(就是上面的#数字), "time": "HH:MM", "reason": "理由"},
-    {"i": 任务编号, "time": "HH:MM", "reason": "理由"}
-  ]
-}`;
+只返回 JSON，不要 markdown 包裹：
+{"title":"","due":"","timeStart":"","timeEnd":"","duration":null,"priority":"中","category":"","project":"","content":""}`;
   const content=await callAI([
-    {role:"system",content:"你是一位专业的时间管理顾问，擅长帮人合理规划日程。回复必须严格遵循指定 JSON 格式。"},
+    {role:"system",content:"你是任务文本解析助手。严格按 JSON 格式返回，不解释。"},
     {role:"user",content:prompt}
-  ],{temperature:0.5,max_tokens:1500});
-  // 解析 JSON（容错处理：可能 AI 包了 markdown ```json ... ```）
+  ],{temperature:0.2,max_tokens:400});
   let jsonStr=content.trim();
   const m=jsonStr.match(/```(?:json)?\s*([\s\S]+?)\s*```/);
   if(m)jsonStr=m[1];
-  // 找第一个 { 到最后一个 }
+  const start=jsonStr.indexOf("{"),end=jsonStr.lastIndexOf("}");
+  if(start>=0&&end>start)jsonStr=jsonStr.slice(start,end+1);
+  try{
+    const parsed=JSON.parse(jsonStr);
+    return parsed;
+  }catch(e){
+    console.error("[aiParseTask Parse Error]",content);
+    throw new Error("解析失败，请尝试更清晰的描述");
+  }
+}
+
+// ═══ AI 助手对话工具 ═══
+// 系统 prompt 模板：把用户数据注入上下文
+function buildAssistantSystemPrompt(ctx){
+  const{tasks=[],cats=[],projects=[],tags=[],journals=[],today=todayStr(),displayName=""}=ctx;
+  const undone=tasks.filter(t=>!t.done);
+  const overdue=undone.filter(t=>t.due&&t.due<today);
+  const todayList=undone.filter(t=>t.due===today);
+  const future=undone.filter(t=>t.due&&t.due>today);
+  const activeProjects=projects.filter(p=>p.startDate&&p.endDate&&p.startDate<=today&&today<=p.endDate);
+  const recentJournals=journals.slice(-3).map(j=>`${j.date}: ${j.wish||""}${j.mood?" "+j.mood:""}`).filter(Boolean);
+  const catLines=cats.map(c=>`${c.id}=${c.name}`).join(", ");
+  
+  return`你是 Timelinek 应用的 AI 助手，帮 ${displayName||"用户"} 管理任务和规划生活。
+
+# 当前数据快照（${today}）
+- 总任务：${tasks.length}（已完成 ${tasks.length-undone.length}，未完成 ${undone.length}）
+- 逾期：${overdue.length} 项${overdue.length>0?`（最早 ${overdue[0].due}）`:""}
+- 今日：${todayList.length} 项
+- 未来：${future.length} 项
+- 活跃项目：${activeProjects.length>0?activeProjects.map(p=>`「${p.name}」(${p.startDate}~${p.endDate})`).join(", "):"无"}
+- 标签：${tags.length>0?tags.map(t=>"#"+t.name).join(" "):"无"}
+- 分类映射：${catLines}
+${recentJournals.length>0?`- 近期日记：\n${recentJournals.join("\n")}`:""}
+
+# 你的能力
+1. 回答关于任务、计划、效率的问题
+2. 分析用户的工作模式、习惯、瓶颈
+3. 通过 function call 帮用户增删改任务（创建/修改/删除/列表）
+4. 适当闲聊，但优先聚焦在任务管理上
+5. 如果用户上传了文件，基于文件内容回答
+
+# 行为规则
+- 中文回答，简洁直接，不啰嗦
+- 重要操作（删除任务、批量修改）执行前要先描述清楚再做
+- 不知道的事情就说不知道，不编造
+- 当前时间是 ${today}`;
+}
+
+// AI 助手可调用的工具列表（OpenAI function calling 格式）
+const ASSISTANT_TOOLS=[
+  {
+    type:"function",
+    function:{
+      name:"create_task",
+      description:"创建一个新任务",
+      parameters:{
+        type:"object",
+        properties:{
+          title:{type:"string",description:"任务标题"},
+          due:{type:"string",description:"截止日期 YYYY-MM-DD"},
+          timeStart:{type:"string",description:"开始时间 HH:MM"},
+          timeEnd:{type:"string",description:"结束时间 HH:MM"},
+          duration:{type:"number",description:"预计分钟数"},
+          priority:{type:"string",enum:["高","中","低"]},
+          category:{type:"string",description:"分类 id（如 work/study/life）"},
+          projectId:{type:"string",description:"项目 id（可选）"},
+          content:{type:"string",description:"备注（可选）"},
+        },
+        required:["title"],
+      },
+    },
+  },
+  {
+    type:"function",
+    function:{
+      name:"update_task",
+      description:"修改一个已有任务的字段",
+      parameters:{
+        type:"object",
+        properties:{
+          taskId:{type:"number",description:"任务 id"},
+          title:{type:"string"},
+          due:{type:"string"},
+          timeStart:{type:"string"},
+          timeEnd:{type:"string"},
+          duration:{type:"number"},
+          priority:{type:"string",enum:["高","中","低"]},
+          done:{type:"boolean"},
+        },
+        required:["taskId"],
+      },
+    },
+  },
+  {
+    type:"function",
+    function:{
+      name:"delete_task",
+      description:"删除一个任务（移到回收站，30 天后永久清除）",
+      parameters:{
+        type:"object",
+        properties:{
+          taskId:{type:"number",description:"任务 id"},
+        },
+        required:["taskId"],
+      },
+    },
+  },
+  {
+    type:"function",
+    function:{
+      name:"list_tasks",
+      description:"按条件列出任务（用于回答\"我有几个未完成任务\"这类问题）",
+      parameters:{
+        type:"object",
+        properties:{
+          filter:{type:"string",enum:["all","done","undone","overdue","today","future"],description:"过滤范围"},
+          limit:{type:"number",description:"最多返回多少条，默认 10"},
+        },
+      },
+    },
+  },
+];
+
+// AI 调用函数后端实际执行
+function executeAssistantTool(name,args,handlers){
+  switch(name){
+    case"create_task":return handlers.createTask(args);
+    case"update_task":return handlers.updateTask(args);
+    case"delete_task":return handlers.deleteTask(args);
+    case"list_tasks":return handlers.listTasks(args);
+    default:return{error:"未知工具: "+name};
+  }
+}
+
+// 带工具调用的 AI 对话（多轮 tool call 支持）
+async function callAssistantWithTools(messages,handlers,onProgress){
+  const conversation=[...messages];
+  let rounds=0;
+  while(rounds<5){ // 最多 5 轮 tool 调用，防死循环
+    rounds++;
+    const{data}=await supabase.auth.getSession();
+    const token=data.session?.access_token;
+    if(!token)throw new Error("未登录");
+    const ctrl=new AbortController();
+    const tm=setTimeout(()=>ctrl.abort(),90000);
+    let resp;
+    try{
+      resp=await fetch(AI_WORKER_URL,{
+        method:"POST",
+        headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
+        body:JSON.stringify({messages:conversation,tools:ASSISTANT_TOOLS,tool_choice:"auto",temperature:0.7,max_tokens:1500}),
+        signal:ctrl.signal,
+      });
+    }catch(e){clearTimeout(tm);if(e.name==="AbortError")throw new Error("AI 响应超时");throw new Error("网络失败: "+e.message);}
+    clearTimeout(tm);
+    if(!resp.ok){
+      let errMsg=`HTTP ${resp.status}`;
+      try{const err=await resp.json();errMsg+=" · "+(err.error?.message||err.error||JSON.stringify(err));}catch{}
+      throw new Error(errMsg);
+    }
+    const result=await resp.json();
+    const msg=result.choices?.[0]?.message;
+    if(!msg)throw new Error("AI 无返回");
+    conversation.push(msg);
+    // 没有 tool calls 就是最终回复
+    if(!msg.tool_calls||msg.tool_calls.length===0){
+      return{content:msg.content||"",conversation};
+    }
+    // 有 tool_calls，执行它们
+    for(const tc of msg.tool_calls){
+      let args={};
+      try{args=JSON.parse(tc.function.arguments||"{}");}catch{}
+      onProgress&&onProgress({type:"tool_call",name:tc.function.name,args});
+      const toolResult=executeAssistantTool(tc.function.name,args,handlers);
+      conversation.push({
+        role:"tool",
+        tool_call_id:tc.id,
+        content:JSON.stringify(toolResult).slice(0,2000),
+      });
+      onProgress&&onProgress({type:"tool_result",name:tc.function.name,result:toolResult});
+    }
+  }
+  return{content:"已达最大调用轮次",conversation};
+}
+
+// 文件解析为文本
+async function extractFileText(file){
+  const ext=(file.name.split(".").pop()||"").toLowerCase();
+  if(["txt","md","csv","json","html","js","ts","py","java","go","rs","c","cpp","yaml","yml","xml","log"].includes(ext)){
+    return await file.text();
+  }
+  if(ext==="docx"&&window.mammoth){
+    const buf=await file.arrayBuffer();
+    const r=await window.mammoth.extractRawText({arrayBuffer:buf});
+    return r.value||"";
+  }
+  if(ext==="xlsx"||ext==="xls"){
+    if(!window.XLSX)throw new Error("Excel 解析库未加载");
+    const buf=await file.arrayBuffer();
+    const wb=window.XLSX.read(buf,{type:"array"});
+    let out="";
+    wb.SheetNames.forEach(n=>{
+      out+=`# 工作表：${n}\n`;
+      const ws=wb.Sheets[n];
+      out+=window.XLSX.utils.sheet_to_csv(ws)+"\n\n";
+    });
+    return out;
+  }
+  throw new Error("不支持的文件类型: ."+ext);
+}
+
+// ═══ AI 日报告 ═══
+async function aiDailyReport({date,tasks,history,catOf,projOf,journals}){
+  // 取该日所有相关任务（done/在历史中的/在 tasks 里 due===date 的）
+  const histEntry=history.find(h=>h.date===date);
+  const histTasks=histEntry?histEntry.tasks:[];
+  const liveTasks=tasks.filter(t=>t.due===date||t.completedAt===date);
+  // 合并去重
+  const seen=new Set();
+  const allTasks=[];
+  liveTasks.forEach(t=>{if(!seen.has(t.id)){seen.add(t.id);allTasks.push(t);}});
+  histTasks.forEach(t=>{
+    if(!seen.has(t.id)){
+      seen.add(t.id);
+      // 在 live tasks 里找是否被删了
+      const liveCopy=tasks.find(x=>x.id===t.id);
+      allTasks.push(liveCopy||t);
+    }
+  });
+  if(allTasks.length===0)throw new Error("当日无任务记录");
+  
+  const journal=(journals||[]).find(j=>j.date===date);
+  const doneN=allTasks.filter(t=>t.done||histTasks.find(h=>h.id===t.id&&h.done)).length;
+  const totalDur=allTasks.reduce((s,t)=>s+(t.actualMin||0),0);
+  
+  const taskLines=allTasks.map(t=>{
+    const c=catOf(t.category);
+    const p=t.projectId?projOf(t.projectId):null;
+    const isDone=t.done||histTasks.find(h=>h.id===t.id&&h.done);
+    return`${isDone?"✓":"○"} 【${t.priority}】"${t.title}" ${c?.name||""}${p?` · ${p.name}`:""}${t.timeStart?` ${t.timeStart}`:""}${t.actualMin?` 用时 ${Math.round(t.actualMin)}min`:""}${t.duration?` 预计 ${t.duration}min`:""}`;
+  }).join("\n");
+  
+  const prompt=`请为我生成一份当日复盘报告。
+
+# 日期：${date}（${weekdayCN(date)}）
+# 完成情况：${doneN}/${allTasks.length} 项 · 累计专注 ${Math.round(totalDur)} 分钟
+${journal?`# 今日心情：${journal.mood||""}\n# 今日一句：${journal.wish||""}\n`:""}
+# 任务详情：
+${taskLines}
+
+# 报告要求
+请用第二人称视角写给"我"看，包含以下内容：
+
+1. **整体评价**（一段，60-100字）
+   - 完成率如何？哪几项是亮点？
+   - 当日的整体节奏（紧凑/松弛/混乱）
+   
+2. **细节洞察**（2-3 条，每条 1-2 句话）
+   - 例：哪个分类做得最好/最差？
+   - 例：实际用时和预计用时的差距
+   - 例：高优先任务有没有被优先处理
+   
+3. **明日提醒**（1-2 条 简短）
+   - 基于今日观察，对明日的具体建议
+
+# 输出格式（严格 JSON，不要 markdown 包裹）
+{
+  "title": "今日小结 · 主题词（如：'高效专注的一天' / '被打断的工作日'）",
+  "rating": 5,  // 1-5 星评分
+  "review": "整体评价段落",
+  "insights": ["洞察1", "洞察2", "洞察3"],
+  "tomorrow": ["建议1", "建议2"]
+}`;
+  const content=await callAI([
+    {role:"system",content:"你是用户的私人复盘教练，洞察敏锐，语言精准温暖。严格按 JSON 格式返回。"},
+    {role:"user",content:prompt}
+  ],{temperature:0.6,max_tokens:1500});
+  let jsonStr=content.trim();
+  const m=jsonStr.match(/```(?:json)?\s*([\s\S]+?)\s*```/);
+  if(m)jsonStr=m[1];
+  const start=jsonStr.indexOf("{"),end=jsonStr.lastIndexOf("}");
+  if(start>=0&&end>start)jsonStr=jsonStr.slice(start,end+1);
+  try{return JSON.parse(jsonStr);}
+  catch(e){console.error("[aiDailyReport]",content);throw new Error("AI 返回格式异常");}
+}
+
+// ═══ AI 周报告 ═══
+async function aiWeeklyReport({startDate,endDate,history,tasks,catOf,projOf,journals}){
+  // 收集这一周的数据
+  const dates=[];
+  let cur=startDate;
+  while(cur<=endDate){dates.push(cur);cur=addDays(cur,1);}
+  
+  const dailyStats=dates.map(d=>{
+    const h=history.find(x=>x.date===d);
+    const ht=h?h.tasks:[];
+    const live=tasks.filter(t=>t.due===d||t.completedAt===d);
+    // 合并
+    const seen=new Set();
+    const all=[];
+    live.forEach(t=>{if(!seen.has(t.id)){seen.add(t.id);all.push(t);}});
+    ht.forEach(t=>{if(!seen.has(t.id)){seen.add(t.id);all.push(t);}});
+    const done=all.filter(t=>t.done||ht.find(x=>x.id===t.id&&x.done)).length;
+    const dur=all.reduce((s,t)=>s+(t.actualMin||0),0);
+    return{date:d,total:all.length,done,duration:Math.round(dur)};
+  });
+  
+  // 分类统计
+  const catStats={};
+  dailyStats.forEach(s=>{
+    const h=history.find(x=>x.date===s.date);
+    const ht=h?h.tasks:tasks.filter(t=>t.due===s.date);
+    ht.forEach(t=>{
+      const c=catOf(t.category);
+      const name=c?.name||t.category;
+      if(!catStats[name])catStats[name]={total:0,done:0,duration:0};
+      catStats[name].total++;
+      if(t.done)catStats[name].done++;
+      catStats[name].duration+=Math.round(t.actualMin||0);
+    });
+  });
+  
+  // 项目活跃度
+  const projStats={};
+  dailyStats.forEach(s=>{
+    const h=history.find(x=>x.date===s.date);
+    const ht=h?h.tasks:tasks.filter(t=>t.due===s.date);
+    ht.forEach(t=>{
+      if(!t.projectId)return;
+      const p=projOf(t.projectId);
+      if(!p)return;
+      if(!projStats[p.name])projStats[p.name]={total:0,done:0};
+      projStats[p.name].total++;
+      if(t.done)projStats[p.name].done++;
+    });
+  });
+  
+  // 习惯（每日重复）的连续天数
+  const habits=tasks.filter(t=>t.repeat).slice(0,8);
+  const habitStreaks=habits.map(habit=>{
+    let streak=0;
+    for(let i=dates.length-1;i>=0;i--){
+      const d=dates[i];
+      const h=history.find(x=>x.date===d);
+      const ht=h?h.tasks:tasks.filter(t=>t.due===d);
+      const found=ht.find(t=>t.title===habit.title&&t.repeat);
+      if(found&&found.done)streak++;
+      else break;
+    }
+    return{title:habit.title,streak};
+  });
+  
+  const totalAll=dailyStats.reduce((s,d)=>s+d.total,0);
+  const totalDone=dailyStats.reduce((s,d)=>s+d.done,0);
+  const totalDur=dailyStats.reduce((s,d)=>s+d.duration,0);
+  const activeDays=dailyStats.filter(d=>d.total>0).length;
+  
+  // 摘录这一周的日记
+  const weekJournals=(journals||[]).filter(j=>j.date>=startDate&&j.date<=endDate);
+  
+  const prompt=`生成本周复盘报告（${startDate} ~ ${endDate}）。
+
+# 总体数据
+- 任务：${totalDone}/${totalAll} 完成（${totalAll?Math.round(totalDone/totalAll*100):0}%）
+- 累计专注：${Math.round(totalDur/60*10)/10} 小时
+- 活跃天：${activeDays}/${dates.length} 天
+
+# 每日明细
+${dailyStats.map(d=>`${d.date}(${weekdayCN(d.date)}): ${d.done}/${d.total} · ${d.duration}min`).join("\n")}
+
+# 分类分布
+${Object.entries(catStats).map(([k,v])=>`${k}: ${v.done}/${v.total} · ${v.duration}min`).join("\n")||"无"}
+
+# 项目进展
+${Object.entries(projStats).map(([k,v])=>`${k}: ${v.done}/${v.total}`).join("\n")||"无项目活动"}
+
+# 习惯打卡
+${habitStreaks.map(h=>`${h.title}: 连续 ${h.streak} 天`).join("\n")||"无每日重复任务"}
+
+# 本周日记
+${weekJournals.map(j=>`${j.date}: ${j.wish||""}${j.mood?" "+j.mood:""}`).join("\n")||"无"}
+
+# 报告要求
+1. **本周主题词**（一个词，捕捉本周特征）
+2. **整体评价**（150字以内）：完成率/节奏/亮点/问题
+3. **关键洞察**（3-5条）：具体的发现
+4. **模式分析**：高效时段、容易拖延的类型、能量曲线
+5. **下周建议**（2-3条）：具体可执行
+
+# 输出格式（严格 JSON）
+{
+  "theme": "本周主题词",
+  "rating": 5,
+  "review": "整体评价段",
+  "insights": ["洞察1", "洞察2", "洞察3"],
+  "patterns": "模式分析段（≤120字）",
+  "nextWeek": ["建议1", "建议2", "建议3"]
+}`;
+  const content=await callAI([
+    {role:"system",content:"你是用户的私人成长教练，擅长从每周数据中发现规律、给出具体可执行的建议。"},
+    {role:"user",content:prompt}
+  ],{temperature:0.6,max_tokens:2000});
+  let jsonStr=content.trim();
+  const m=jsonStr.match(/```(?:json)?\s*([\s\S]+?)\s*```/);
+  if(m)jsonStr=m[1];
+  const start=jsonStr.indexOf("{"),end=jsonStr.lastIndexOf("}");
+  if(start>=0&&end>start)jsonStr=jsonStr.slice(start,end+1);
+  try{
+    const result=JSON.parse(jsonStr);
+    return{...result,stats:{totalAll,totalDone,totalDur,activeDays,catStats,projStats,habitStreaks,dailyStats}};
+  }
+  catch(e){console.error("[aiWeeklyReport]",content);throw new Error("AI 返回格式异常");}
+}
+
+async function aiPlanToday(tasks,catOf,projOf,today){
+  // 把任务分成 3 组：逾期 / 今日 / 未来 7 天
+  const overdueT=tasks.filter(t=>!t.done&&t.due&&t.due<today);
+  const todayT=tasks.filter(t=>!t.done&&(t.due===today||!t.due));
+  const futureT=tasks.filter(t=>!t.done&&t.due&&t.due>today&&t.due<=addDays(today,7));
+  if(todayT.length===0&&overdueT.length===0)throw new Error("今日和逾期都没有任务可排");
+  // 给三组任务分配序号 [#1] [#2]... 全局唯一
+  const allTasks=[...overdueT,...todayT,...futureT];
+  const fmtTask=(t,idx,group)=>{
+    const c=catOf(t.category);
+    const p=t.projectId?projOf(t.projectId):null;
+    let line=`[#${idx+1}] [${group}]【${t.priority}】"${t.title}"`;
+    if(c?.name)line+=` 分类:${c.name}`;
+    if(p?.name)line+=` 项目:${p.name}`;
+    if(t.due)line+=` 截止:${t.due}`;
+    if(t.duration)line+=` 预计:${t.duration}分钟`;
+    if(t.timeStart)line+=` 已设定:${t.timeStart}${t.timeEnd?`-${t.timeEnd}`:""}`;
+    if(t.content)line+=` 备注:${t.content.slice(0,60)}`;
+    return line;
+  };
+  let body="";
+  let idxCursor=0;
+  if(overdueT.length>0){
+    body+=`【逾期任务 · 需优先处理】\n`;
+    overdueT.forEach((t,i)=>{body+=fmtTask(t,idxCursor+i,"逾期")+"\n";});
+    idxCursor+=overdueT.length;
+    body+="\n";
+  }
+  if(todayT.length>0){
+    body+=`【今日任务】\n`;
+    todayT.forEach((t,i)=>{body+=fmtTask(t,idxCursor+i,"今日")+"\n";});
+    idxCursor+=todayT.length;
+    body+="\n";
+  }
+  if(futureT.length>0){
+    body+=`【未来 7 天任务 · 仅供参考工作量】\n`;
+    futureT.forEach((t,i)=>{body+=fmtTask(t,idxCursor+i,"未来")+"\n";});
+    body+="\n";
+  }
+  const now=new Date();
+  const curHour=String(now.getHours()).padStart(2,"0")+":"+String(now.getMinutes()).padStart(2,"0");
+  const prompt=`你是一位资深的个人时间管理顾问。请综合分析下面的任务：
+
+${body}
+当前时间：${curHour}（${today}）
+
+请按以下原则为今日制定排期：
+
+【处理逾期任务】
+- 优先把逾期任务挤进今日的合适时段（除非已经设定固定时间）
+- 太多逾期时，按"高优先 → 紧迫程度"排，把不那么重要的延后
+
+【今日排期】
+- 已设定固定时间（timeStart）的任务保持原时间不动
+- 高优先 + 创造性任务放上午精力旺盛时段
+- 沟通/事务/低认知任务放下午
+- 任务之间留 5-10 分钟缓冲
+- 不要把任务排到午餐时间（12:00-13:30）和睡觉时间（22:00 之后）
+
+【整体策略】
+- 一段策略说明（≤120字），点明：今天有几项逾期？是否会过载？关键安排逻辑
+- 如果今日任务量看起来太满（>8 项或预计时长 >8 小时），主动指出建议延后哪些
+- 关注"未来 7 天"那部分仅作为整体工作量背景，不要给它们排时间
+
+【输出】
+只为「逾期 + 今日」这两组任务给出排期，未来任务不输出。
+严格按以下 JSON 格式返回（不要 markdown 包裹）：
+{
+  "summary": "整体策略说明（含逾期处理、负载评估、关键调度逻辑）",
+  "plan": [
+    {"i": 任务编号, "time": "HH:MM", "reason": "理由（≤25字）"}
+  ],
+  "notes": ["可选 · 给用户的额外建议（≤2 条，每条≤30字）"]
+}`;
+  const content=await callAI([
+    {role:"system",content:"你是一位资深的个人时间管理顾问，擅长综合分析任务积压、当日工作量和未来计划，给出务实的排期建议。回复必须严格遵循指定 JSON 格式。"},
+    {role:"user",content:prompt}
+  ],{temperature:0.5,max_tokens:2200});
+  let jsonStr=content.trim();
+  const m=jsonStr.match(/```(?:json)?\s*([\s\S]+?)\s*```/);
+  if(m)jsonStr=m[1];
   const start=jsonStr.indexOf("{"),end=jsonStr.lastIndexOf("}");
   if(start>=0&&end>start)jsonStr=jsonStr.slice(start,end+1);
   let parsed;
   try{parsed=JSON.parse(jsonStr);}
   catch(e){console.error("[AI Parse Error]",content);throw new Error("AI 返回格式异常，请重试");}
   if(!Array.isArray(parsed.plan))throw new Error("AI 返回格式不正确");
-  // 把 AI 用的序号 i 映射回真实任务 id（兼容 AI 可能直接给了真实 id 或 i 字段）
+  // 序号 → 真实任务 id（在 allTasks 里）
   const remapped=parsed.plan.map(p=>{
     let realId=null;
-    // 先尝试 i 字段（推荐路径）
     if(p.i!=null){
       const idx=Number(p.i)-1;
-      if(idx>=0&&idx<taskList.length)realId=taskList[idx].id;
+      if(idx>=0&&idx<allTasks.length)realId=allTasks[idx].id;
     }
-    // 兜底：如果 AI 用了 id 字段，但值很小（说明它还是写的序号）
     if(realId==null&&p.id!=null){
       const idx=Number(p.id)-1;
-      if(idx>=0&&idx<taskList.length&&taskList.some(t=>t.id===p.id)){
-        realId=p.id;
-      }else if(idx>=0&&idx<taskList.length){
-        realId=taskList[idx].id;
-      }
+      if(idx>=0&&idx<allTasks.length&&allTasks.some(t=>t.id===p.id)){realId=p.id;}
+      else if(idx>=0&&idx<allTasks.length){realId=allTasks[idx].id;}
     }
     return realId==null?null:{id:realId,time:p.time,reason:p.reason};
   }).filter(Boolean);
-  return{summary:parsed.summary||"",plan:remapped};
+  return{summary:parsed.summary||"",plan:remapped,notes:Array.isArray(parsed.notes)?parsed.notes:[],stats:{overdue:overdueT.length,today:todayT.length,future:futureT.length}};
 }
 
 // ═══ NATURAL LANGUAGE PARSER ═══
@@ -755,6 +1273,10 @@ const IC_PATHS={
   folder:<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>,
   circle:<circle cx="12" cy="12" r="10"/>,
   command:<path d="M15 6V5a3 3 0 113 3h-1m-4 0V9a3 3 0 11-3-3h1m4 0h-4m4 12v1a3 3 0 103-3h-1m-4 0v-1a3 3 0 10-3 3h1m4 0h-4"/>,
+  paperclip:<path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>,
+  bot:<g><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></g>,
+  zap:<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>,
+  fileText:<g><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></g>,
 };
 function Ic({n,size=16,color="currentColor",sw=1.6}){return<svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}>{IC_PATHS[n]||null}</svg>;}
 
@@ -902,53 +1424,43 @@ function AuthScreen(){
         <path d="M 30 50 Q 40 40 55 45 Q 65 40 75 50 Q 85 45 90 55 Q 75 60 30 55 Z" fill={PG.ink1} opacity="0.15"/>
       </svg>
 
-      <div style={{width:"100%",maxWidth:420,position:"relative",zIndex:10}}>
+      <div style={{width:"100%",maxWidth:440,position:"relative",zIndex:10}}>
         {/* Logo */}
-        <div style={{textAlign:"center",marginBottom:30}}>
-          <h1 className="display" style={{fontSize:78,letterSpacing:"-0.045em",lineHeight:1,marginBottom:12,whiteSpace:"nowrap"}}>
+        <div style={{textAlign:"center",marginBottom:36}}>
+          <h1 className="display" style={{fontSize:88,letterSpacing:"-0.05em",lineHeight:1,marginBottom:14,whiteSpace:"nowrap",fontWeight:700}}>
             <span style={{color:PG.ink0}}>Time</span>
             <em style={{fontStyle:"italic",fontWeight:400,color:PG.accent3,paddingRight:"0.1em"}}>linek</em>
           </h1>
-          <p style={{fontSize:13,color:PG.ink2,letterSpacing:"0.08em",fontStyle:"italic"}}>纸 · 笔 · 时间 · 一座小花园</p>
+          <p style={{fontSize:15,color:PG.ink1,letterSpacing:"0.04em",fontWeight:500}}>专注当下 · 规划未来</p>
         </div>
 
         {/* 卡片 */}
-        <div style={{borderRadius:18,padding:32,background:PG.paper,border:`1.5px solid ${PG.border}`,boxShadow:`0 1px 0 rgba(255,255,255,0.6) inset, 0 12px 40px rgba(61,53,40,0.08), 0 2px 4px rgba(61,53,40,0.04)`,position:"relative"}}>
-          {/* 装饰角标 */}
-          <div style={{position:"absolute",top:14,right:18,fontSize:10,color:PG.ink3,letterSpacing:"0.2em",fontFamily:"monospace",fontWeight:600}}>·  PG  ·</div>
-          
-          <h2 className="display" style={{fontSize:28,color:PG.ink0,marginBottom:6,letterSpacing:"-0.02em",fontWeight:700}}>
-            {mode==="login"?<>欢迎<em style={{fontStyle:"italic",color:PG.accent3}}>回来</em></>:<>开启<em style={{fontStyle:"italic",color:PG.accent3}}>新页</em></>}
+        <div style={{borderRadius:20,padding:"36px 32px 30px",background:PG.paper,border:`1.5px solid ${PG.border}`,boxShadow:`0 1px 0 rgba(255,255,255,0.6) inset, 0 16px 48px rgba(61,53,40,0.1), 0 2px 6px rgba(61,53,40,0.05)`,position:"relative"}}>
+          <h2 className="display" style={{fontSize:30,color:PG.ink0,marginBottom:8,letterSpacing:"-0.02em",fontWeight:700}}>
+            {mode==="login"?<>欢迎<em style={{fontStyle:"italic",color:PG.accent3}}>回来</em></>:<>开启<em style={{fontStyle:"italic",color:PG.accent3}}>新篇</em></>}
           </h2>
-          <p style={{fontSize:12.5,color:PG.ink2,marginBottom:22,letterSpacing:"0.02em"}}>
-            {mode==="login"?"在你的小花园继续耕种":"种下第一颗种子"}
+          <p style={{fontSize:14,color:PG.ink2,marginBottom:26,letterSpacing:"0.01em"}}>
+            {mode==="login"?"继续你的任务计划":"创建账户开始使用"}
           </p>
 
           <form onSubmit={submit}>
             <div style={{marginBottom:14}}>
-              <label style={{fontSize:10,color:PG.ink2,letterSpacing:"0.18em",fontWeight:600,fontFamily:"monospace",display:"block",marginBottom:6,paddingLeft:2}}>USERNAME</label>
-              <input value={username} onChange={e=>setUsername(e.target.value)} type="text" placeholder="你的名字" autoComplete="username" maxLength={32} style={inpS} onFocus={e=>{e.target.style.borderColor=PG.accent;e.target.style.boxShadow=`0 0 0 3px ${PG.glow}`;}} onBlur={e=>{e.target.style.borderColor=PG.border;e.target.style.boxShadow="none";}}/>
-              {mode==="signup"&&username.length>0&&!usernameValid&&<div style={{fontSize:11,color:PG.accent3,marginTop:6,paddingLeft:2,fontStyle:"italic"}}>名字需要至少 2 个字符</div>}
+              <input value={username} onChange={e=>setUsername(e.target.value)} type="text" placeholder="账户名" autoComplete="username" maxLength={32} style={{...inpS,fontSize:15,padding:"15px 18px"}} onFocus={e=>{e.target.style.borderColor=PG.accent;e.target.style.boxShadow=`0 0 0 3px ${PG.glow}`;}} onBlur={e=>{e.target.style.borderColor=PG.border;e.target.style.boxShadow="none";}}/>
+              {mode==="signup"&&username.length>0&&!usernameValid&&<div style={{fontSize:12,color:PG.accent3,marginTop:8,paddingLeft:4}}>账户名至少 2 个字符</div>}
             </div>
-            <div style={{marginBottom:22}}>
-              <label style={{fontSize:10,color:PG.ink2,letterSpacing:"0.18em",fontWeight:600,fontFamily:"monospace",display:"block",marginBottom:6,paddingLeft:2}}>PASSWORD</label>
-              <input value={password} onChange={e=>setPassword(e.target.value)} type="password" placeholder="6 位以上" autoComplete={mode==="login"?"current-password":"new-password"} style={inpS} onFocus={e=>{e.target.style.borderColor=PG.accent;e.target.style.boxShadow=`0 0 0 3px ${PG.glow}`;}} onBlur={e=>{e.target.style.borderColor=PG.border;e.target.style.boxShadow="none";}}/>
-              {mode==="signup"&&password.length>0&&!passwordValid&&<div style={{fontSize:11,color:PG.accent3,marginTop:6,paddingLeft:2,fontStyle:"italic"}}>密码需要至少 6 位</div>}
+            <div style={{marginBottom:24}}>
+              <input value={password} onChange={e=>setPassword(e.target.value)} type="password" placeholder="密码" autoComplete={mode==="login"?"current-password":"new-password"} style={{...inpS,fontSize:15,padding:"15px 18px"}} onFocus={e=>{e.target.style.borderColor=PG.accent;e.target.style.boxShadow=`0 0 0 3px ${PG.glow}`;}} onBlur={e=>{e.target.style.borderColor=PG.border;e.target.style.boxShadow="none";}}/>
+              {mode==="signup"&&password.length>0&&!passwordValid&&<div style={{fontSize:12,color:PG.accent3,marginTop:8,paddingLeft:4}}>密码至少 6 位</div>}
             </div>
-            <button type="submit" disabled={!canSubmit} style={{width:"100%",padding:"14px",background:canSubmit?`linear-gradient(135deg,${PG.accent} 0%,${PG.accent2} 100%)`:"#e8e2d3",color:canSubmit?"#fff":PG.ink3,borderRadius:12,fontSize:14,fontWeight:700,letterSpacing:"0.1em",transition:"all 0.2s var(--ease)",boxShadow:canSubmit?`0 6px 20px ${PG.accent}40`:"none",cursor:canSubmit?"pointer":"not-allowed"}}>
-              {loading?<span className="spin">○</span>:mode==="login"?"打 开 花 园":"开 始 种 植"}
+            <button type="submit" disabled={!canSubmit} style={{width:"100%",padding:"15px",background:canSubmit?`linear-gradient(135deg,${PG.accent} 0%,${PG.accent2} 100%)`:"#e8e2d3",color:canSubmit?"#fff":PG.ink3,borderRadius:12,fontSize:15,fontWeight:700,letterSpacing:"0.04em",transition:"all 0.2s var(--ease)",boxShadow:canSubmit?`0 8px 24px ${PG.accent}50`:"none",cursor:canSubmit?"pointer":"not-allowed"}}>
+              {loading?<span className="spin">○</span>:mode==="login"?"登 录":"创 建 账 户"}
             </button>
           </form>
-          {msg&&<div className="fadeIn" style={{marginTop:14,padding:"11px 14px",background:msg.startsWith("err")?"rgba(168,90,60,0.08)":"rgba(122,140,92,0.1)",color:msg.startsWith("err")?PG.accent3:PG.accent,fontSize:12,borderRadius:10,lineHeight:1.6,border:`1px solid ${msg.startsWith("err")?"rgba(168,90,60,0.2)":"rgba(122,140,92,0.2)"}`}}>{msg.slice(4)}</div>}
-          <div style={{marginTop:20,textAlign:"center",fontSize:12.5,color:PG.ink2}}>
-            {mode==="login"?"第一次来？":"已经有账户？"}
-            <button type="button" onClick={()=>{setMode(mode==="login"?"signup":"login");setMsg("");}} style={{color:PG.accent,fontWeight:600,marginLeft:6,padding:0,fontSize:12.5,textDecoration:"underline",textUnderlineOffset:"3px"}}>{mode==="login"?"开个账户":"去登录"}</button>
+          {msg&&<div className="fadeIn" style={{marginTop:16,padding:"12px 16px",background:msg.startsWith("err")?"rgba(168,90,60,0.08)":"rgba(122,140,92,0.1)",color:msg.startsWith("err")?PG.accent3:PG.accent,fontSize:13,borderRadius:10,lineHeight:1.6,border:`1px solid ${msg.startsWith("err")?"rgba(168,90,60,0.2)":"rgba(122,140,92,0.2)"}`}}>{msg.slice(4)}</div>}
+          <div style={{marginTop:24,paddingTop:20,borderTop:`1px solid ${PG.border}`,textAlign:"center",fontSize:14,color:PG.ink2}}>
+            {mode==="login"?"还没有账户？":"已经有账户？"}
+            <button type="button" onClick={()=>{setMode(mode==="login"?"signup":"login");setMsg("");}} style={{color:PG.accent,fontWeight:700,marginLeft:8,padding:0,fontSize:14}}>{mode==="login"?"立即注册 →":"← 返回登录"}</button>
           </div>
-        </div>
-
-        {/* 底部小语 */}
-        <div style={{textAlign:"center",marginTop:24,fontSize:11,color:PG.ink3,letterSpacing:"0.06em",fontStyle:"italic"}}>
-          一日一记 · 一花一世界
         </div>
       </div>
     </div>
@@ -975,17 +1487,71 @@ function MainApp({user}){
   const[showJournalModal,setShowJournalModal]=useState(false);
   // ═══ AI 状态 ═══
   const[aiLoading,setAiLoading]=useState(false);
+  const[aiParseLoading,setAiParseLoading]=useState(false);
   const[aiPlan,setAiPlan]=useState(null); // {summary,plan:[{id,time,reason}]}
   const[showAiPlanModal,setShowAiPlanModal]=useState(false);
+  // 用 AI 解析快速输入文本，解析后直接创建任务
+  const smartParseAndAdd=async(text,fallbackDue)=>{
+    if(!text.trim())return;
+    if(aiParseLoading)return;
+    setAiParseLoading(true);
+    try{
+      const parsed=await aiParseTask(text,today,cats,projects);
+      // 把分类名映射回 id
+      let catId="work";
+      if(parsed.category){
+        const c=cats.find(x=>x.name===parsed.category);
+        if(c)catId=c.id;
+      }
+      // 项目名映射回 id
+      let projId="";
+      if(parsed.project){
+        const p=projects.find(x=>x.name===parsed.project);
+        if(p)projId=p.id;
+      }
+      const finalDue=parsed.due||fallbackDue||today;
+      // 自动归属活跃项目（如果 AI 没指定 project 且任务的 due 在项目周期内）
+      if(!projId&&activeProject&&finalDue>=activeProject.startDate&&finalDue<=activeProject.endDate){
+        projId=activeProject.id;
+      }
+      const newTask={
+        id:Date.now(),
+        ...emptyTask,
+        title:parsed.title||text.trim(),
+        content:parsed.content||"",
+        due:finalDue,
+        timeStart:parsed.timeStart||"",
+        timeEnd:parsed.timeEnd||"",
+        duration:parsed.duration?String(parsed.duration):"",
+        priority:parsed.priority||"中",
+        category:catId,
+        projectId:projId,
+        sortKey:nextSortKey(),
+        createdAt:today,
+        done:false,
+      };
+      setTasks(t=>[...t,newTask]);
+      const detected=[];
+      if(parsed.due&&parsed.due!==today)detected.push(parsed.due===addDays(today,1)?"明天":parsed.due);
+      if(parsed.timeStart)detected.push(parsed.timeStart);
+      if(parsed.duration)detected.push(parsed.duration+"min");
+      if(projId&&projects.find(p=>p.id===projId))detected.push("→ "+projects.find(p=>p.id===projId).name);
+      showToast(`✨ AI 解析成功${detected.length?" · "+detected.join(" · "):""}`,"success");
+      setQuickTitle("");
+    }catch(err){
+      showToast("AI 解析失败: "+(err.message||"请直接添加"),"error");
+    }
+    setAiParseLoading(false);
+  };
   const requestAiPlan=async()=>{
     if(aiLoading)return;
     setAiLoading(true);
     try{
-      // 只发今日 + 未完成的任务
-      const todayTasks=tasks.filter(t=>!t.done&&(t.due===today||!t.due));
-      if(todayTasks.length===0){showToast("今日没有待办任务","info");setAiLoading(false);return;}
-      if(todayTasks.length>30){showToast("任务太多（>30），请先精简","error");setAiLoading(false);return;}
-      const result=await aiPlanToday(todayTasks,catOf,projOf);
+      // 把全部未完成任务发给 AI（AI 内部会区分 逾期/今日/未来）
+      const undone=tasks.filter(t=>!t.done);
+      if(undone.length===0){showToast("没有待办任务","info");setAiLoading(false);return;}
+      if(undone.length>50){showToast("任务太多（>50），请先精简","error");setAiLoading(false);return;}
+      const result=await aiPlanToday(undone,catOf,projOf,today);
       setAiPlan(result);
       setShowAiPlanModal(true);
     }catch(err){
@@ -999,7 +1565,6 @@ function MainApp({user}){
     setTasks(list=>list.map(t=>{
       const found=planArr.find(p=>p.id===t.id);
       if(!found)return t;
-      // 只设置 timeStart，不覆盖已有的 timeEnd
       let newTimeEnd=t.timeEnd;
       if(t.duration&&found.time){
         try{
@@ -1010,7 +1575,9 @@ function MainApp({user}){
           }
         }catch{}
       }
-      return{...t,timeStart:found.time,timeEnd:newTimeEnd||t.timeEnd};
+      // 逾期任务的 due 改成今天，让它显示在今日视图
+      const newDue=(t.due&&t.due<today)?today:t.due;
+      return{...t,timeStart:found.time,timeEnd:newTimeEnd||t.timeEnd,due:newDue};
     }));
     setShowAiPlanModal(false);
     setAiPlan(null);
@@ -1308,6 +1875,33 @@ function MainApp({user}){
     check();const interval=setInterval(check,60000);
     return()=>clearInterval(interval);
   },[tasks,notifPerm,loaded]);
+
+  // ═══ 自动每日复盘报告 ═══
+  const[autoReport,setAutoReport]=useState(null);
+  useEffect(()=>{
+    if(!loaded)return;
+    const checkReview=async()=>{
+      const cfg=getReviewConfig();
+      if(!cfg.autoDaily)return;
+      const now=new Date();
+      const curHM=String(now.getHours()).padStart(2,"0")+":"+String(now.getMinutes()).padStart(2,"0");
+      // 已设的复盘时间 HH:MM
+      const target=cfg.dailyTime||"21:30";
+      // 已为今天生成过则跳过
+      if(cfg.lastDailyAt===today)return;
+      // 当前时间过了目标时间，且没生成过 → 自动生成
+      if(curHM>=target){
+        try{
+          const data=await aiDailyReport({date:today,tasks,history,catOf,projOf,journals});
+          setAutoReport({type:"daily",data,date:today});
+          setReviewConfig({...cfg,lastDailyAt:today});
+        }catch(e){console.error("[Auto Daily Report]",e);}
+      }
+    };
+    checkReview();
+    const itv=setInterval(checkReview,5*60*1000); // 每 5 分钟检查
+    return()=>clearInterval(itv);
+  },[loaded,tasks,history,journals,today]);
 
   // ═══ CRUD ═══
   // 新任务自动取最大 sortKey + 1000，插到队首/队尾
@@ -1609,6 +2203,7 @@ function MainApp({user}){
     tags,setTags,tagsMap,addTag,updateTag,removeTag,reorderTask,
     journals,saveJournal,removeJournal,setShowJournalModal,
     aiLoading,requestAiPlan,
+    setTrash,nextSortKey,emptyTask,showToast,displayName,
   };
 
   return(
@@ -1624,7 +2219,7 @@ function MainApp({user}){
         <div style={{display:"flex",flexDirection:"column",minHeight:"100vh"}}>
           <TopBar th={th} view={view} setView={setView} setShowCmdK={setShowCmdK} setShowTaskForm={setShowTaskForm} syncStatus={syncStatus} displayName={displayName} setShowSettings={setShowSettings} setShowSearch={setShowSearch}/>
           <main style={{flex:1,overflowY:"auto",padding:"24px 32px 28px",minWidth:0,position:"relative"}} className="slim-scroll">
-            {view!=="activity"&&view!=="kanban"&&view!=="projects"&&view!=="month"&&<HeroHeader th={th} displayName={displayName} greeting={greeting} dateNum={dateNum} today={today} doneAll={doneAll} totalAll={totalAll} overdueCount={overdueCount} runningTask={runningTask} view={view} projects={projects}/>}
+            {view!=="activity"&&view!=="kanban"&&view!=="projects"&&view!=="month"&&view!=="assistant"&&<HeroHeader th={th} displayName={displayName} greeting={greeting} dateNum={dateNum} today={today} doneAll={doneAll} totalAll={totalAll} overdueCount={overdueCount} runningTask={runningTask} view={view} projects={projects}/>}
             {notifPerm==="default"&&tasks.some(t=>t.timeStart&&t.due===today)&&<NotifBanner th={th} askNotif={askNotif}/>}
             {showSearch&&<SearchBar th={th} searchQ={searchQ} setQ={setSearchQ} filtered={filtered} onClose={()=>{setShowSearch(false);setSearchQ("");}}/>}
             <ViewRouter {...vp}/>
@@ -1657,7 +2252,8 @@ function MainApp({user}){
       {showTaskForm&&<TaskForm th={th} cats={cats} projects={projects} tags={tags} addTag={addTag} taskForm={taskForm} setTaskForm={setTaskForm} addOrEditTask={addOrEditTask} cancelForm={cancelForm} editTaskId={editTaskId} today={today}/>}
       {showTemplates&&<TemplatePicker th={th} cats={cats} setShowTemplates={setShowTemplates} addFromTemplate={addFromTemplate}/>}
       {showJournalModal&&<JournalModal th={th} today={today} todayJournal={todayJournal} saveJournal={saveJournal} onClose={dismissJournalModal}/>}
-      {showAiPlanModal&&aiPlan&&<AiPlanModal th={th} plan={aiPlan} tasks={tasks} catOf={catOf} onApply={applyAiPlan} onClose={()=>{setShowAiPlanModal(false);setAiPlan(null);}}/>}
+      {showAiPlanModal&&aiPlan&&<AiPlanModal th={th} plan={aiPlan} tasks={tasks} catOf={catOf} today={today} onApply={applyAiPlan} onClose={()=>{setShowAiPlanModal(false);setAiPlan(null);}}/>}
+      {autoReport&&<AiReportModal th={th} report={autoReport} onClose={()=>setAutoReport(null)}/>}
       {showSettings&&<Settings th={th} themeId={themeId} setThemeId={setThemeId} cats={cats} setCats={setCats} projects={projects} setProjects={setProjects} tasks={tasks} history={history} setTasks={setTasks} setHistory={setHistory} trash={trash} restoreTask={restoreTask} purgeTask={purgeTask} emptyTrash={emptyTrash} tags={tags} addTag={addTag} updateTag={updateTag} removeTag={removeTag} onClose={()=>setShowSettings(false)} user={user} onSignOut={signOut} notifPerm={notifPerm} askNotif={askNotif} installPWA={installPWA} installState={installState} today={today} showToast={showToast} catOf={catOf}/>}
     </div>
   );
@@ -1675,6 +2271,7 @@ function ViewRouter(p){
     case "recent":return<RecentView {...p}/>;
     case "journal":return<JournalView {...p}/>;
     case "review":return<ReviewView {...p}/>;
+    case "assistant":return<AssistantView {...p}/>;
     default:return<TasksView {...p}/>;
   }
 }
@@ -1688,6 +2285,7 @@ function SideNav({th,view,setView,projects,catOf,tasks,today,setShowSettings,set
     {id:"month",t:"月视图",ic:"grid"},
     {id:"kanban",t:"看板",ic:"layers"},
     {id:"projects",t:"项目",ic:"folder"},
+    {id:"assistant",t:"AI 助手",ic:"bot"},
     {id:"activity",t:"活动流",ic:"list"},
     {id:"recent",t:"近期完成",ic:"check"},
     {id:"journal",t:"一句日记",ic:"book"},
@@ -1742,7 +2340,7 @@ function SideNav({th,view,setView,projects,catOf,tasks,today,setShowSettings,set
 
 // ═══ TOP BAR (desktop) ═══
 function TopBar({th,view,setView,setShowCmdK,setShowTaskForm,syncStatus,displayName,setShowSettings,setShowSearch}){
-  const viewName={today:"今日",tomorrow:"明日",week:"本周",month:"月视图",kanban:"看板",projects:"项目",activity:"活动",review:"复盘"};
+  const viewName={today:"今日",tomorrow:"明日",week:"本周",month:"月视图",kanban:"看板",projects:"项目",assistant:"AI 助手",activity:"活动",recent:"近期完成",journal:"一句日记",review:"复盘"};
   const label=viewName[view]||"今日";
   return(
     <header style={{padding:"14px 24px",display:"flex",alignItems:"center",gap:14,borderBottom:`1px solid ${th.glassBorder}`,background:th.isDark?"rgba(13,11,26,0.6)":"rgba(255,255,255,0.55)",backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)",position:"sticky",top:0,zIndex:20}}>
@@ -2012,9 +2610,7 @@ function MobileBottomBar({th,view,setView,setShowTaskForm,startPomodoro,setShowS
         {navItem("today","主页","target")}
         {navItem("projects","项目","folder")}
         <div style={{width:66}}/>
-        <button onClick={()=>startPomodoro()} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"8px 0",color:th.ink3,fontSize:10,letterSpacing:"0.04em"}}>
-          <Ic n="flame" size={20} color={th.accent3}/>专注
-        </button>
+        {navItem("assistant","AI","bot")}
         <button onClick={()=>setShowSettings(true)} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"8px 0",color:th.ink3,fontSize:10,letterSpacing:"0.04em"}}>
           <Ic n="settings" size={20} color={th.ink3}/>设置
         </button>
@@ -2076,22 +2672,140 @@ function UndoToast({th,undo,doUndo}){
 }
 
 // ═══ AI PLAN MODAL · AI 排期建议弹窗 ═══
-function AiPlanModal({th,plan,tasks,catOf,onApply,onClose}){
+// ═══ AI REPORT MODAL · 日报告/周报告统一弹窗 ═══
+function AiReportModal({th,report,onClose}){
+  if(!report)return null;
+  const{type,data}=report;
+  const isWeekly=type==="weekly";
+  const renderStars=(rating)=>{
+    const r=Math.max(1,Math.min(5,Math.round(rating||3)));
+    return"★".repeat(r)+"☆".repeat(5-r);
+  };
+  return(
+    <div className="fadeIn modal-overlay" onClick={onClose}>
+      <div onClick={e=>e.stopPropagation()} className="slideUp glass-strong" style={{borderRadius:22,maxWidth:620,width:"100%",padding:0,position:"relative",overflow:"hidden",maxHeight:"90vh",display:"flex",flexDirection:"column"}}>
+        {/* 顶部色带 */}
+        <div style={{padding:"22px 26px 18px",background:`linear-gradient(135deg,${th.accent}25,${th.accent3}15)`,position:"relative",overflow:"hidden",flexShrink:0}}>
+          <div style={{position:"absolute",top:-30,right:-20,width:120,height:120,borderRadius:"50%",background:`radial-gradient(circle,${th.accent3}40,transparent 70%)`,filter:"blur(15px)",pointerEvents:"none"}}/>
+          <div style={{display:"flex",alignItems:"flex-start",gap:14,position:"relative"}}>
+            <div style={{width:46,height:46,borderRadius:13,background:`linear-gradient(135deg,${th.accent},${th.accent3})`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:`0 4px 14px ${th.accent}50`}}>
+              <span style={{fontSize:22}}>{isWeekly?"📊":"🪞"}</span>
+            </div>
+            <div style={{flex:1,minWidth:0}}>
+              <div className="mono" style={{fontSize:11,letterSpacing:"0.22em",color:th.accent2,marginBottom:4,fontWeight:600}}>
+                {isWeekly?`WEEKLY · ${report.startDate} ~ ${report.endDate}`:`DAILY · ${report.date}`}
+              </div>
+              <h2 className="display" style={{fontSize:22,color:th.ink0,letterSpacing:"-0.02em",lineHeight:1.2,marginBottom:6}}>
+                {isWeekly?(data.theme||"本周复盘"):(data.title||"今日复盘")}
+              </h2>
+              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                <span style={{fontSize:14,color:"#f5a524",letterSpacing:"0.18em"}}>{renderStars(data.rating)}</span>
+                {data.rating&&<span className="mono" style={{fontSize:11,color:th.ink2}}>{data.rating}/5</span>}
+              </div>
+            </div>
+            <button onClick={onClose} style={{width:32,height:32,borderRadius:9,background:th.glass2,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Ic n="close" size={14} color={th.ink2}/></button>
+          </div>
+        </div>
+
+        {/* 内容区 */}
+        <div className="slim-scroll" style={{flex:1,overflowY:"auto",padding:"20px 26px"}}>
+          {/* 整体评价 */}
+          <div style={{marginBottom:18}}>
+            <div className="mono" style={{fontSize:11,letterSpacing:"0.18em",color:th.ink3,marginBottom:8,fontWeight:600}}>📝 整体评价</div>
+            <div style={{padding:"12px 16px",background:th.glass1,borderRadius:11,fontSize:13.5,color:th.ink1,lineHeight:1.75,borderLeft:`2px solid ${th.accent}`}}>
+              {data.review}
+            </div>
+          </div>
+
+          {/* 关键洞察 */}
+          {Array.isArray(data.insights)&&data.insights.length>0&&(
+            <div style={{marginBottom:18}}>
+              <div className="mono" style={{fontSize:11,letterSpacing:"0.18em",color:th.ink3,marginBottom:8,fontWeight:600}}>🔍 关键洞察</div>
+              <div style={{display:"flex",flexDirection:"column",gap:7}}>
+                {data.insights.map((ins,i)=>(
+                  <div key={i} className="glass" style={{padding:"10px 14px",borderRadius:10,fontSize:12.5,color:th.ink1,lineHeight:1.6,display:"flex",gap:10,alignItems:"flex-start"}}>
+                    <span style={{color:th.accent2,fontWeight:700,minWidth:14}}>{i+1}.</span>
+                    <span style={{flex:1}}>{ins}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 周报独有：模式分析 */}
+          {isWeekly&&data.patterns&&(
+            <div style={{marginBottom:18}}>
+              <div className="mono" style={{fontSize:11,letterSpacing:"0.18em",color:th.ink3,marginBottom:8,fontWeight:600}}>📈 模式分析</div>
+              <div style={{padding:"12px 16px",background:`linear-gradient(135deg,${th.accent2}15,${th.accent}08)`,borderRadius:11,fontSize:13,color:th.ink1,lineHeight:1.7,border:`1px dashed ${th.accent2}40`}}>
+                {data.patterns}
+              </div>
+            </div>
+          )}
+
+          {/* 周报独有：本周数据 */}
+          {isWeekly&&data.stats&&(
+            <div style={{marginBottom:18}}>
+              <div className="mono" style={{fontSize:11,letterSpacing:"0.18em",color:th.ink3,marginBottom:8,fontWeight:600}}>📊 本周数据</div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8}}>
+                {[
+                  {l:"任务完成",v:`${data.stats.totalDone}/${data.stats.totalAll}`,sub:data.stats.totalAll?Math.round(data.stats.totalDone/data.stats.totalAll*100)+"%":"-"},
+                  {l:"专注时长",v:Math.round(data.stats.totalDur/60*10)/10,sub:"小时"},
+                  {l:"活跃天数",v:data.stats.activeDays,sub:"/ 7 天"},
+                  {l:"分类数",v:Object.keys(data.stats.catStats||{}).length,sub:"个"},
+                ].map((s,i)=>(
+                  <div key={i} className="glass" style={{padding:"10px 8px",borderRadius:10,textAlign:"center"}}>
+                    <div className="display tnum" style={{fontSize:20,color:th.accent2,letterSpacing:"-0.03em",fontWeight:700}}>{s.v}</div>
+                    <div className="mono" style={{fontSize:9,color:th.ink3,marginTop:2,letterSpacing:"0.04em"}}>{s.sub}</div>
+                    <div style={{fontSize:10,color:th.ink2,marginTop:3}}>{s.l}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 明日提醒 / 下周建议 */}
+          {((data.tomorrow&&data.tomorrow.length>0)||(data.nextWeek&&data.nextWeek.length>0))&&(
+            <div style={{marginBottom:8}}>
+              <div className="mono" style={{fontSize:11,letterSpacing:"0.18em",color:th.ink3,marginBottom:8,fontWeight:600}}>{isWeekly?"🎯 下周建议":"💡 明日提醒"}</div>
+              <div style={{display:"flex",flexDirection:"column",gap:7}}>
+                {(data.tomorrow||data.nextWeek||[]).map((adv,i)=>(
+                  <div key={i} style={{padding:"10px 14px",background:"rgba(245,165,36,0.08)",borderRadius:10,fontSize:12.5,color:"#f5a524",lineHeight:1.6,border:"1px solid rgba(245,165,36,0.18)",display:"flex",gap:10,alignItems:"flex-start"}}>
+                    <span style={{minWidth:14}}>→</span>
+                    <span style={{flex:1,fontWeight:500}}>{adv}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* 底部 */}
+        <div style={{padding:"14px 26px",borderTop:`1px solid ${th.glassBorder}`,display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
+          <span className="mono" style={{fontSize:9,color:th.ink3,letterSpacing:"0.04em",flex:1}}>由 DeepSeek 分析生成</span>
+          <button onClick={onClose} style={{padding:"8px 18px",borderRadius:10,background:`linear-gradient(135deg,${th.accent},${th.accent3})`,color:"#fff",fontSize:12,fontWeight:600,boxShadow:`0 4px 12px ${th.accent}50`}}>知道了</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AiPlanModal({th,plan,tasks,catOf,onApply,onClose,today}){
   const[edited,setEdited]=useState(plan?.plan||[]);
-  // 关联到任务详细信息
+  const stats=plan?.stats||{overdue:0,today:0,future:0};
+  const notes=plan?.notes||[];
   const planWithTasks=useMemo(()=>{
     return edited.map(p=>{
       const t=tasks.find(x=>x.id===p.id);
-      return{...p,task:t};
+      const isOverdue=t&&t.due&&t.due<today;
+      return{...p,task:t,isOverdue};
     }).filter(x=>x.task).sort((a,b)=>(a.time||"99:99").localeCompare(b.time||"99:99"));
-  },[edited,tasks]);
+  },[edited,tasks,today]);
   const updateTime=(id,time)=>{
     setEdited(arr=>arr.map(p=>p.id===id?{...p,time}:p));
   };
   return(
     <div className="fadeIn modal-overlay" onClick={onClose}>
-      <div onClick={e=>e.stopPropagation()} className="slideUp glass-strong" style={{borderRadius:22,maxWidth:560,width:"100%",padding:"26px 26px 22px",position:"relative",overflow:"hidden",maxHeight:"88vh",display:"flex",flexDirection:"column"}}>
-        {/* 装饰光斑 */}
+      <div onClick={e=>e.stopPropagation()} className="slideUp glass-strong" style={{borderRadius:22,maxWidth:580,width:"100%",padding:"26px 26px 22px",position:"relative",overflow:"hidden",maxHeight:"88vh",display:"flex",flexDirection:"column"}}>
         <div style={{position:"absolute",top:-50,right:-30,width:140,height:140,borderRadius:"50%",background:`radial-gradient(circle,${th.accent}40 0%,transparent 70%)`,filter:"blur(20px)",pointerEvents:"none"}}/>
         <div style={{position:"absolute",bottom:-40,left:-30,width:120,height:120,borderRadius:"50%",background:`radial-gradient(circle,${th.accent3}30 0%,transparent 70%)`,filter:"blur(20px)",pointerEvents:"none"}}/>
         
@@ -2100,11 +2814,28 @@ function AiPlanModal({th,plan,tasks,catOf,onApply,onClose}){
             <span style={{fontSize:14}}>✨</span> AI · 智能排期建议
           </div>
           <h2 className="display" style={{fontSize:24,color:th.ink0,letterSpacing:"-0.02em",lineHeight:1.1,marginBottom:10}}>
-            今日 <em style={{fontStyle:"italic"}} className="gradient-primary">{planWithTasks.length}</em> 项任务的安排
+            为你安排 <em style={{fontStyle:"italic"}} className="gradient-primary">{planWithTasks.length}</em> 项任务
           </h2>
+          {/* 统计条 */}
+          {(stats.overdue>0||stats.future>0)&&(
+            <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
+              {stats.overdue>0&&<div style={{padding:"5px 11px",background:"rgba(255,93,122,0.12)",color:"#ff5d7a",fontSize:11,borderRadius:7,fontWeight:600,letterSpacing:"0.02em",border:"1px solid rgba(255,93,122,0.25)"}}>⚠ {stats.overdue} 项逾期</div>}
+              <div style={{padding:"5px 11px",background:th.glass2,color:th.accent,fontSize:11,borderRadius:7,fontWeight:600,letterSpacing:"0.02em",border:`1px solid ${th.glassBorder}`}}>📌 {stats.today} 项今日</div>
+              {stats.future>0&&<div style={{padding:"5px 11px",background:th.glass1,color:th.ink2,fontSize:11,borderRadius:7,fontWeight:500,letterSpacing:"0.02em",border:`1px solid ${th.glassBorder}`}}>📅 {stats.future} 项未来</div>}
+            </div>
+          )}
           {plan?.summary&&(
-            <div style={{padding:"10px 14px",background:th.glass1,borderRadius:10,fontSize:12.5,color:th.ink2,lineHeight:1.65,marginBottom:14,borderLeft:`2px solid ${th.accent}`}}>
+            <div style={{padding:"10px 14px",background:th.glass1,borderRadius:10,fontSize:12.5,color:th.ink2,lineHeight:1.65,marginBottom:notes.length>0?10:14,borderLeft:`2px solid ${th.accent}`}}>
               💡 {plan.summary}
+            </div>
+          )}
+          {notes.length>0&&(
+            <div style={{display:"flex",flexDirection:"column",gap:5,marginBottom:14}}>
+              {notes.map((n,i)=>(
+                <div key={i} style={{padding:"7px 12px",background:"rgba(245,165,36,0.08)",borderRadius:8,fontSize:11.5,color:"#f5a524",lineHeight:1.5,border:"1px solid rgba(245,165,36,0.18)"}}>
+                  💬 {n}
+                </div>
+              ))}
             </div>
           )}
         </div>
@@ -2115,14 +2846,18 @@ function AiPlanModal({th,plan,tasks,catOf,onApply,onClose}){
             {planWithTasks.map((p,i)=>{
               const c=catOf(p.task.category);
               return(
-                <div key={p.id} className="glass" style={{padding:"11px 14px",borderRadius:11,borderLeft:`3px solid ${c.color}`,display:"flex",alignItems:"center",gap:10}}>
+                <div key={p.id} className="glass" style={{padding:"11px 14px",borderRadius:11,borderLeft:`3px solid ${p.isOverdue?"#ff5d7a":c.color}`,display:"flex",alignItems:"center",gap:10,background:p.isOverdue?"rgba(255,93,122,0.04)":undefined}}>
                   <input type="time" value={p.time} onChange={e=>updateTime(p.id,e.target.value)} style={{width:90,padding:"6px 8px",borderRadius:8,background:th.glass2,border:`1px solid ${th.glassBorder}`,color:th.ink0,fontSize:13,fontWeight:600,fontVariantNumeric:"tabular-nums",cursor:"pointer"}}/>
                   <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:13,fontWeight:500,color:th.ink0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.task.title}</div>
+                    <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:2,flexWrap:"wrap"}}>
+                      {p.isOverdue&&<span style={{fontSize:9,color:"#fff",background:"#ff5d7a",padding:"1px 6px",borderRadius:4,fontWeight:700,letterSpacing:"0.04em"}}>逾期</span>}
+                      <div style={{fontSize:13,fontWeight:500,color:th.ink0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>{p.task.title}</div>
+                    </div>
                     <div style={{display:"flex",gap:6,marginTop:2,alignItems:"center",flexWrap:"wrap"}}>
                       <span className="mono" style={{fontSize:9,color:c.color,fontWeight:600}}>{c.glyph} {c.name}</span>
                       <span className="mono" style={{fontSize:9,color:th.ink3}}>· {p.task.priority}</span>
                       {p.task.duration&&<span className="mono" style={{fontSize:9,color:th.ink3}}>· {p.task.duration}min</span>}
+                      {p.task.due&&p.task.due<today&&<span className="mono" style={{fontSize:9,color:"#ff5d7a"}}>· 原 {p.task.due.slice(5)}</span>}
                     </div>
                     <div style={{fontSize:11,color:th.ink2,marginTop:4,lineHeight:1.5}}>💭 {p.reason}</div>
                   </div>
@@ -2138,8 +2873,275 @@ function AiPlanModal({th,plan,tasks,catOf,onApply,onClose}){
             <Ic n="check" size={13} sw={2.5}/> 应用排期到所有任务
           </button>
         </div>
-        <div className="mono" style={{fontSize:9,color:th.ink3,letterSpacing:"0.06em",marginTop:8,textAlign:"center"}}>由 DeepSeek 提供 · 时间可手动调整</div>
+        <div className="mono" style={{fontSize:9,color:th.ink3,letterSpacing:"0.06em",marginTop:8,textAlign:"center"}}>由 DeepSeek 提供 · 时间可手动调整 · 应用后逾期任务会改为今天截止</div>
       </div>
+    </div>
+  );
+}
+
+// ═══ AI ASSISTANT · 对话视图 ═══
+function AssistantView({th,tasks,setTasks,projects,cats,catOf,tags,journals,today,displayName,nextSortKey,showToast,emptyTask,setTrash}){
+  const[messages,setMessages]=useState(()=>{
+    try{const r=localStorage.getItem("tlk_chat_v1");if(r)return JSON.parse(r);}catch{}
+    return[];
+  });
+  const[input,setInput]=useState("");
+  const[loading,setLoading]=useState(false);
+  const[attachedFiles,setAttachedFiles]=useState([]); // [{name,text,size}]
+  const[parsing,setParsing]=useState(false);
+  const[confirmAction,setConfirmAction]=useState(null); // {desc, run, args}
+  const fileInputRef=useRef(null);
+  const scrollRef=useRef(null);
+  
+  // 持久化对话
+  useEffect(()=>{
+    try{localStorage.setItem("tlk_chat_v1",JSON.stringify(messages.slice(-30)));}catch{}
+  },[messages]);
+  
+  // 自动滚到底部
+  useEffect(()=>{
+    if(scrollRef.current)scrollRef.current.scrollTop=scrollRef.current.scrollHeight;
+  },[messages,loading]);
+
+  // 工具实现
+  const handlers={
+    createTask:(args)=>{
+      const dueOk=args.due||today;
+      let projId=args.projectId||"";
+      if(projId&&!projects.find(p=>p.id===projId))projId="";
+      const newT={
+        id:Date.now()+Math.floor(Math.random()*1000),
+        ...emptyTask,
+        title:args.title||"未命名",
+        content:args.content||"",
+        category:args.category&&cats.find(c=>c.id===args.category)?args.category:"work",
+        priority:args.priority||"中",
+        due:dueOk,
+        timeStart:args.timeStart||"",
+        timeEnd:args.timeEnd||"",
+        duration:args.duration?String(args.duration):"",
+        projectId:projId,
+        sortKey:nextSortKey(),
+        createdAt:today,
+        done:false,
+      };
+      setTasks(t=>[...t,newT]);
+      return{success:true,taskId:newT.id,message:`任务"${newT.title}"已创建`};
+    },
+    updateTask:(args)=>{
+      const tid=Number(args.taskId);
+      const target=tasks.find(t=>t.id===tid);
+      if(!target)return{success:false,message:"任务不存在 id="+tid};
+      setTasks(list=>list.map(t=>{
+        if(t.id!==tid)return t;
+        const next={...t};
+        ["title","due","timeStart","timeEnd","priority","content"].forEach(k=>{if(args[k]!==undefined)next[k]=args[k];});
+        if(args.duration!==undefined)next.duration=String(args.duration);
+        if(args.done!==undefined){next.done=!!args.done;next.progress=args.done?1:0;if(args.done)next.completedAt=today;}
+        return next;
+      }));
+      return{success:true,message:`任务 #${tid} 已更新`};
+    },
+    deleteTask:(args)=>{
+      const tid=Number(args.taskId);
+      const target=tasks.find(t=>t.id===tid);
+      if(!target)return{success:false,message:"任务不存在 id="+tid};
+      setTasks(t=>t.filter(x=>x.id!==tid));
+      setTrash&&setTrash(tr=>[...tr,{...target,deletedAt:Date.now()}]);
+      return{success:true,message:`任务"${target.title}"已删除（移至回收站）`};
+    },
+    listTasks:(args)=>{
+      const filter=args.filter||"all";
+      const limit=Math.min(args.limit||10,30);
+      let list=tasks;
+      if(filter==="done")list=tasks.filter(t=>t.done);
+      else if(filter==="undone")list=tasks.filter(t=>!t.done);
+      else if(filter==="overdue")list=tasks.filter(t=>!t.done&&t.due&&t.due<today);
+      else if(filter==="today")list=tasks.filter(t=>!t.done&&t.due===today);
+      else if(filter==="future")list=tasks.filter(t=>!t.done&&t.due&&t.due>today);
+      const items=list.slice(0,limit).map(t=>({
+        id:t.id,
+        title:t.title,
+        due:t.due||"",
+        timeStart:t.timeStart||"",
+        priority:t.priority,
+        category:(catOf(t.category)||{}).name||t.category,
+        done:t.done,
+      }));
+      return{count:list.length,returned:items.length,items};
+    },
+  };
+
+  // 上传文件解析
+  const onFilesPick=async(files)=>{
+    if(!files||files.length===0)return;
+    setParsing(true);
+    const newAttached=[];
+    for(const f of Array.from(files)){
+      try{
+        const txt=await extractFileText(f);
+        newAttached.push({name:f.name,text:txt.slice(0,30000),size:f.size});
+        showToast(`已附加：${f.name}（${(txt.length/1000).toFixed(1)}k 字）`,"success");
+      }catch(e){
+        showToast(`${f.name}：${e.message}`,"error");
+      }
+    }
+    setAttachedFiles(a=>[...a,...newAttached]);
+    setParsing(false);
+    if(fileInputRef.current)fileInputRef.current.value="";
+  };
+
+  const sendMsg=async(opts={})=>{
+    const text=opts.forceText||input.trim();
+    if(!text&&attachedFiles.length===0)return;
+    if(loading)return;
+    
+    const userMsgContent=[];
+    if(attachedFiles.length>0){
+      userMsgContent.push("📎 附件内容：\n");
+      attachedFiles.forEach(f=>{
+        userMsgContent.push(`【文件：${f.name}】\n${f.text}\n`);
+      });
+      userMsgContent.push("---\n");
+    }
+    userMsgContent.push(text||"请基于附件内容帮助我。");
+    const fullText=userMsgContent.join("");
+    
+    // UI 显示用：保留附件标记
+    const displayMsg={role:"user",content:text||"（基于附件提问）",files:attachedFiles.map(f=>f.name),ts:Date.now()};
+    const newMessages=[...messages,displayMsg];
+    setMessages(newMessages);
+    setInput("");
+    setAttachedFiles([]);
+    setLoading(true);
+    
+    try{
+      const sysPrompt=buildAssistantSystemPrompt({tasks,cats,projects,tags,journals,today,displayName});
+      // 构造发送给 API 的消息（含完整附件内容）
+      const apiMsgs=[
+        {role:"system",content:sysPrompt},
+        ...newMessages.slice(-10).map((m,i)=>{
+          if(i===newMessages.slice(-10).length-1){
+            return{role:"user",content:fullText};
+          }
+          return{role:m.role,content:m.content};
+        }),
+      ];
+      const result=await callAssistantWithTools(apiMsgs,handlers,(progress)=>{
+        if(progress.type==="tool_call"){
+          setMessages(m=>[...m,{role:"system_event",content:`🔧 调用工具：${progress.name}`,ts:Date.now()}]);
+        }
+      });
+      setMessages(m=>[...m,{role:"assistant",content:result.content,ts:Date.now()}]);
+    }catch(err){
+      setMessages(m=>[...m,{role:"assistant",content:`❌ ${err.message}`,error:true,ts:Date.now()}]);
+    }
+    setLoading(false);
+  };
+
+  const clearChat=()=>{
+    if(!confirm("清空所有对话历史？"))return;
+    setMessages([]);
+    try{localStorage.removeItem("tlk_chat_v1");}catch{}
+    showToast("对话已清空","info");
+  };
+
+  // 快捷指令
+  const quickActions=[
+    "总结我今天的任务",
+    "本周哪些任务最重要？",
+    "帮我把所有逾期任务列出来",
+    "给我一些提升效率的建议",
+  ];
+
+  return(
+    <div className="fadeIn" style={{display:"flex",flexDirection:"column",height:"calc(100vh - 100px)",maxHeight:900,minHeight:500}}>
+      {/* Header */}
+      <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:14,paddingBottom:14,borderBottom:`1px solid ${th.glassBorder}`}}>
+        <div style={{width:42,height:42,borderRadius:12,background:`linear-gradient(135deg,${th.accent},${th.accent3})`,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:`0 4px 16px ${th.accent}50`}}>
+          <span style={{fontSize:20}}>🤖</span>
+        </div>
+        <div style={{flex:1}}>
+          <div className="display" style={{fontSize:22,color:th.ink0,letterSpacing:"-0.02em",fontWeight:700}}>AI 助手</div>
+          <div style={{fontSize:11,color:th.ink2,marginTop:1}}>{messages.length>0?`${messages.length} 条对话`:"问我任何关于任务、计划、效率的问题"}</div>
+        </div>
+        {messages.length>0&&<button onClick={clearChat} className="glass" style={{padding:"7px 12px",borderRadius:9,fontSize:11,color:th.ink2,display:"flex",alignItems:"center",gap:4}}><Ic n="trash" size={11} color={th.ink2}/> 清空</button>}
+      </div>
+
+      {/* 消息列表 */}
+      <div ref={scrollRef} className="slim-scroll" style={{flex:1,overflowY:"auto",padding:"4px 4px 12px",display:"flex",flexDirection:"column",gap:10}}>
+        {messages.length===0&&!loading&&(
+          <div style={{textAlign:"center",padding:"40px 20px",color:th.ink2}}>
+            <div style={{fontSize:48,marginBottom:14}}>💭</div>
+            <div style={{fontSize:14,marginBottom:18,fontWeight:500,color:th.ink1}}>我能帮你做什么？</div>
+            <div style={{display:"flex",flexDirection:"column",gap:8,maxWidth:380,margin:"0 auto"}}>
+              {quickActions.map((q,i)=>(
+                <button key={i} onClick={()=>{setInput(q);setTimeout(()=>sendMsg({forceText:q}),50);}} className="glass hover-lift" style={{padding:"11px 16px",borderRadius:11,fontSize:13,color:th.ink1,textAlign:"left",border:`1px dashed ${th.glassBorder}`}}>
+                  💡 {q}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {messages.map((m,i)=>{
+          if(m.role==="user"){
+            return(
+              <div key={i} style={{display:"flex",justifyContent:"flex-end"}}>
+                <div style={{maxWidth:"80%",padding:"10px 14px",background:`linear-gradient(135deg,${th.accent},${th.accent3})`,color:"#fff",borderRadius:"14px 14px 4px 14px",fontSize:13.5,lineHeight:1.55,wordBreak:"break-word",boxShadow:`0 4px 12px ${th.accent}40`}}>
+                  {m.files&&m.files.length>0&&<div style={{fontSize:10.5,opacity:0.85,marginBottom:6,letterSpacing:"0.04em"}}>📎 {m.files.join(" · ")}</div>}
+                  <div style={{whiteSpace:"pre-wrap"}}>{m.content}</div>
+                </div>
+              </div>
+            );
+          }
+          if(m.role==="system_event"){
+            return(
+              <div key={i} style={{textAlign:"center",fontSize:10.5,color:th.ink3,padding:"4px 0",letterSpacing:"0.04em"}}>{m.content}</div>
+            );
+          }
+          // assistant
+          return(
+            <div key={i} style={{display:"flex",justifyContent:"flex-start",alignItems:"flex-start",gap:8}}>
+              <div style={{width:28,height:28,borderRadius:9,background:m.error?"#ff5d7a30":th.glass1,border:`1px solid ${m.error?"#ff5d7a60":th.glassBorder}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:14}}>{m.error?"⚠":"🤖"}</div>
+              <div className={m.error?"":"glass"} style={{maxWidth:"82%",padding:"10px 14px",background:m.error?"rgba(255,93,122,0.08)":undefined,color:m.error?"#ff5d7a":th.ink0,borderRadius:"14px 14px 14px 4px",fontSize:13.5,lineHeight:1.6,wordBreak:"break-word",border:m.error?"1px solid rgba(255,93,122,0.25)":undefined,whiteSpace:"pre-wrap"}}>{m.content}</div>
+            </div>
+          );
+        })}
+        {loading&&(
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <div style={{width:28,height:28,borderRadius:9,background:th.glass1,border:`1px solid ${th.glassBorder}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>🤖</div>
+            <div className="glass" style={{padding:"10px 14px",borderRadius:"14px 14px 14px 4px",fontSize:13,color:th.ink2,display:"flex",alignItems:"center",gap:8}}>
+              <span className="spin" style={{display:"inline-block"}}>○</span>
+              思考中…
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 附件区 */}
+      {attachedFiles.length>0&&(
+        <div style={{display:"flex",flexWrap:"wrap",gap:6,padding:"8px 0"}}>
+          {attachedFiles.map((f,i)=>(
+            <div key={i} style={{display:"flex",alignItems:"center",gap:6,padding:"5px 10px",background:th.glass1,borderRadius:8,fontSize:11,color:th.ink1,border:`1px solid ${th.glassBorder}`}}>
+              📄 {f.name} <span style={{color:th.ink3}}>({(f.text.length/1000).toFixed(1)}k)</span>
+              <button onClick={()=>setAttachedFiles(a=>a.filter((_,j)=>j!==i))} style={{padding:0,marginLeft:4,color:th.ink3}}>×</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 输入区 */}
+      <div className="glass" style={{padding:10,borderRadius:14,display:"flex",alignItems:"flex-end",gap:8,border:`1.5px solid ${th.glassBorder}`}}>
+        <input ref={fileInputRef} type="file" multiple accept=".txt,.md,.csv,.json,.html,.js,.py,.docx,.xlsx,.xls,.log,.yaml,.yml,.xml" onChange={e=>onFilesPick(e.target.files)} style={{display:"none"}}/>
+        <button onClick={()=>fileInputRef.current&&fileInputRef.current.click()} disabled={parsing||loading} title="上传文件" style={{width:34,height:34,borderRadius:9,background:th.glass2,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,opacity:(parsing||loading)?0.5:1}}>
+          {parsing?<span className="spin">○</span>:<Ic n="paperclip" size={14} color={th.ink1}/>}
+        </button>
+        <textarea value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.isComposing||e.keyCode===229)return;if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMsg();}}} placeholder="问我什么…（Enter 发送，Shift+Enter 换行）" rows={1} style={{flex:1,background:"transparent",border:"none",outline:"none",fontSize:13.5,color:th.ink0,resize:"none",lineHeight:1.5,maxHeight:120,padding:"7px 4px",fontFamily:"inherit"}}/>
+        <button onClick={()=>sendMsg()} disabled={loading||(!input.trim()&&attachedFiles.length===0)} style={{padding:"9px 14px",borderRadius:9,background:(loading||(!input.trim()&&attachedFiles.length===0))?th.glass2:`linear-gradient(135deg,${th.accent},${th.accent3})`,color:"#fff",fontSize:12,fontWeight:600,flexShrink:0,boxShadow:(loading||(!input.trim()&&attachedFiles.length===0))?"none":`0 4px 12px ${th.accent}50`,opacity:(loading||(!input.trim()&&attachedFiles.length===0))?0.5:1}}>
+          {loading?<span className="spin">○</span>:"发送"}
+        </button>
+      </div>
+      <div className="mono" style={{fontSize:9,color:th.ink3,letterSpacing:"0.04em",marginTop:6,textAlign:"center"}}>支持 .txt .md .csv .docx .xlsx 等 · 可创建/修改/删除任务</div>
     </div>
   );
 }
@@ -2611,7 +3613,7 @@ function TasksView(p){
   const catsWithTasks=cats.filter(c=>viewRange.some(t=>t.category===c.id));
   const emptyText=view==="tomorrow"?"明天暂无安排 · 新建一条提前规划":"今天没有任务 · 享受这份轻松";
   const quickDueForView=view==="tomorrow"?tomorrow:today;
-  const phAdd=view==="tomorrow"?"为明天添加…试试「下午3点开会30分钟」":"快速添加…试试「明天9点写周报」";
+  const phAdd=view==="tomorrow"?"为明天添加…试试「下午3点开会30分钟」或点 ✨ AI 智能解析":"快速添加…试试「明天9点写周报」或点 ✨ AI 智能解析";
 
   return(
     <div className="fadeIn">
@@ -2639,8 +3641,15 @@ function TasksView(p){
         <div style={{width:26,height:26,borderRadius:8,background:`linear-gradient(135deg,${th.accent},${th.accent3})`,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:`0 0 10px ${th.accent}66`,flexShrink:0}}>
           <Ic n="plus" size={14} color="#fff" sw={2.2}/>
         </div>
-        <input value={quickTitle} onChange={e=>setQuickTitle(e.target.value)} onKeyDown={e=>{if(e.isComposing||e.keyCode===229)return;if(e.key==="Enter")quickAdd(quickDueForView);}} placeholder={phAdd} style={{flex:1,background:"transparent",border:"none",outline:"none",fontSize:13,color:th.ink0}}/>
-        {quickTitle.trim()&&<button onClick={()=>quickAdd(quickDueForView)} style={{padding:"6px 14px",background:`linear-gradient(135deg,${th.accent},${th.accent3})`,color:"#fff",borderRadius:9,fontSize:12,fontWeight:600}}>添加</button>}
+        <input value={quickTitle} onChange={e=>setQuickTitle(e.target.value)} onKeyDown={e=>{if(e.isComposing||e.keyCode===229)return;if(e.key==="Enter"){if(e.shiftKey)smartParseAndAdd(quickTitle,quickDueForView);else quickAdd(quickDueForView);}}} placeholder={phAdd} style={{flex:1,background:"transparent",border:"none",outline:"none",fontSize:13,color:th.ink0}}/>
+        {quickTitle.trim()&&(
+          <>
+            <button onClick={()=>smartParseAndAdd(quickTitle,quickDueForView)} disabled={aiParseLoading} title="AI 智能解析（Shift+Enter）" style={{padding:"6px 10px",background:aiParseLoading?th.glass2:`linear-gradient(135deg,${th.accent2},${th.accent})`,color:"#fff",borderRadius:9,fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:4,cursor:aiParseLoading?"wait":"pointer"}}>
+              {aiParseLoading?<span className="spin">○</span>:"✨"}
+            </button>
+            <button onClick={()=>quickAdd(quickDueForView)} style={{padding:"6px 14px",background:`linear-gradient(135deg,${th.accent},${th.accent3})`,color:"#fff",borderRadius:9,fontSize:12,fontWeight:600}}>添加</button>
+          </>
+        )}
       </div>
 
       {/* Filter pills - 数字 = 当前视图范围内该分类的任务数（与下方列表保持一致）*/}
@@ -3001,6 +4010,46 @@ function TaskForm({th,cats,projects,tags,addTag,taskForm,setTaskForm,addOrEditTa
         {/* 标签选择 */}
         <div style={{marginBottom:14}}>
           <label className="mono" style={{display:"block",fontSize:10,color:th.ink3,marginBottom:6,letterSpacing:"0.15em"}}>标签 {selectedTagIds.length>0&&<span style={{color:th.accent}}>· 已选 {selectedTagIds.length}</span>}</label>
+          {/* 智能推荐区：基于标题关键词匹配 */}
+          {(()=>{
+            const title=(taskForm.title||"").toLowerCase();
+            if(!title.trim())return null;
+            const recommendations=[];
+            // 推荐标签：标签名出现在标题里
+            (tags||[]).forEach(tg=>{
+              if(selectedTagIds.includes(tg.id))return;
+              const tagName=tg.name.toLowerCase();
+              if(tagName.length<2)return;
+              if(title.includes(tagName)){
+                recommendations.push({type:"tag",tag:tg});
+              }
+            });
+            // 推荐项目：项目名出现在标题里
+            (projects||[]).forEach(p=>{
+              if(taskForm.projectId===p.id)return;
+              const pName=p.name.toLowerCase();
+              if(pName.length<2)return;
+              if(title.includes(pName)){
+                recommendations.push({type:"project",project:p});
+              }
+            });
+            if(recommendations.length===0)return null;
+            return(
+              <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:8,padding:"7px 10px",background:`linear-gradient(135deg,${th.accent}10,${th.accent3}08)`,borderRadius:9,border:`1px dashed ${th.accent}50`}}>
+                <span style={{fontSize:10,color:th.accent2,fontWeight:600,letterSpacing:"0.04em",alignSelf:"center",marginRight:4}}>✨ 推荐：</span>
+                {recommendations.map((r,i)=>{
+                  if(r.type==="tag"){
+                    return<button key={"tg"+r.tag.id} type="button" onClick={()=>toggleTaskTag(r.tag.id)} style={{padding:"4px 9px",borderRadius:6,fontSize:11,fontWeight:500,background:r.tag.color+"30",color:r.tag.color,border:`1px solid ${r.tag.color}60`,display:"flex",alignItems:"center",gap:3}}>
+                      <span style={{fontSize:9}}>+</span> #{r.tag.name}
+                    </button>;
+                  }
+                  return<button key={"pj"+r.project.id} type="button" onClick={()=>setF("projectId",r.project.id)} style={{padding:"4px 9px",borderRadius:6,fontSize:11,fontWeight:500,background:r.project.color+"30",color:r.project.color,border:`1px solid ${r.project.color}60`,display:"flex",alignItems:"center",gap:3}}>
+                    <span style={{fontSize:9}}>+</span> {r.project.glyph} {r.project.name}
+                  </button>;
+                })}
+              </div>
+            );
+          })()}
           <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:8}}>
             {(tags||[]).map(tg=>{
               const sel=selectedTagIds.includes(tg.id);
@@ -4112,8 +5161,28 @@ function RecentView({th,tasks,catOf,projOf,tags,tagsMap,today,history,cats}){
 }
 
 // ═══ REVIEW VIEW ═══
-function ReviewView({th,reviewSub,setReviewSub,tasks,history,cats,projects,catOf,today}){
+function ReviewView({th,reviewSub,setReviewSub,tasks,history,cats,projects,catOf,today,projOf,journals,showToast}){
   const tabs=[["today","今日"],["week","本周"],["month","本月"],["weekly","周报告"],["timeOfDay","时段"],["burndown","燃尽"],["catTime","耗时"],["heatmap","热力图"],["habits","习惯"],["all","历史"]];
+  const[aiReport,setAiReport]=useState(null); // {type:"daily"|"weekly", data, date(s)}
+  const[aiLoading,setAiLoading]=useState(false);
+  const generateDailyReport=async(date)=>{
+    if(aiLoading)return;
+    setAiLoading(true);
+    try{
+      const data=await aiDailyReport({date,tasks,history,catOf,projOf:projOf||(id=>projects.find(p=>p.id===id)),journals});
+      setAiReport({type:"daily",data,date});
+    }catch(e){showToast&&showToast("AI 报告失败: "+e.message,"error");}
+    setAiLoading(false);
+  };
+  const generateWeeklyReport=async(start,end)=>{
+    if(aiLoading)return;
+    setAiLoading(true);
+    try{
+      const data=await aiWeeklyReport({startDate:start,endDate:end,history,tasks,catOf,projOf:projOf||(id=>projects.find(p=>p.id===id)),journals});
+      setAiReport({type:"weekly",data,startDate:start,endDate:end});
+    }catch(e){showToast&&showToast("AI 周报告失败: "+e.message,"error");}
+    setAiLoading(false);
+  };
   return(
     <div className="fadeIn">
       <div style={{marginBottom:16}}>
@@ -4127,6 +5196,24 @@ function ReviewView({th,reviewSub,setReviewSub,tasks,history,cats,projects,catOf
           <button key={k} onClick={()=>setReviewSub(k)} className={`view-tab ${reviewSub===k?"active":""}`} style={{flexShrink:0}}>{l}</button>
         ))}
       </div>
+      {/* AI 报告生成区 — 仅在 today / week 标签显示 */}
+      {(reviewSub==="today"||reviewSub==="week")&&(
+        <div className="glass" style={{padding:"12px 16px",borderRadius:13,marginBottom:14,display:"flex",alignItems:"center",gap:12,border:`1px dashed ${th.accent}50`,background:`linear-gradient(135deg,${th.accent}08,${th.accent3}06)`}}>
+          <div style={{width:36,height:36,borderRadius:9,background:`linear-gradient(135deg,${th.accent},${th.accent3})`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+            <span style={{fontSize:18}}>✨</span>
+          </div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:13,fontWeight:600,color:th.ink0}}>AI {reviewSub==="today"?"今日复盘":"本周报告"}</div>
+            <div style={{fontSize:11,color:th.ink2,marginTop:1}}>由 DeepSeek 分析{reviewSub==="today"?"今日":"本周"}数据，生成深度洞察</div>
+          </div>
+          <button onClick={()=>{
+            if(reviewSub==="today")generateDailyReport(today);
+            else generateWeeklyReport(addDays(today,-6),today);
+          }} disabled={aiLoading} style={{padding:"8px 14px",borderRadius:9,background:aiLoading?th.glass2:`linear-gradient(135deg,${th.accent},${th.accent3})`,color:aiLoading?th.ink3:"#fff",fontSize:12,fontWeight:600,boxShadow:aiLoading?"none":`0 4px 12px ${th.accent}50`,display:"flex",alignItems:"center",gap:6,cursor:aiLoading?"wait":"pointer"}}>
+            {aiLoading?<><span className="spin">○</span> 分析中</>:<><Ic n="zap" size={11} sw={2.2} color="#fff"/> 生成报告</>}
+          </button>
+        </div>
+      )}
       {reviewSub==="today"&&<TodayReview th={th} tasks={tasks} catOf={catOf} today={today}/>}
       {reviewSub==="week"&&<RangeReview th={th} tasks={tasks} history={history} catOf={catOf} today={today} days={7} label="本周"/>}
       {reviewSub==="month"&&<RangeReview th={th} tasks={tasks} history={history} catOf={catOf} today={today} days={30} label="本月"/>}
@@ -4137,6 +5224,7 @@ function ReviewView({th,reviewSub,setReviewSub,tasks,history,cats,projects,catOf
       {reviewSub==="heatmap"&&<HeatmapView th={th} tasks={tasks} history={history} today={today}/>}
       {reviewSub==="habits"&&<HabitsView th={th} tasks={tasks} history={history} catOf={catOf} today={today}/>}
       {reviewSub==="all"&&<AllHistory th={th} tasks={tasks} history={history} catOf={catOf} today={today}/>}
+      {aiReport&&<AiReportModal th={th} report={aiReport} onClose={()=>setAiReport(null)}/>}
     </div>
   );
 }
@@ -4915,6 +6003,46 @@ function SoundSettings({th,showToast,notifPerm,askNotif}){
   );
 }
 
+// ═══ 复盘设置 ═══
+function ReviewSettings({th,showToast}){
+  const[cfg,setCfg]=useState(()=>getReviewConfig());
+  const update=(patch)=>{const next={...cfg,...patch};setCfg(next);setReviewConfig(next);};
+  return(
+    <div style={{padding:"4px 0"}}>
+      {/* 自动日报告 */}
+      <div className="glass" style={{padding:18,borderRadius:14,marginBottom:14}}>
+        <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:14,gap:14}}>
+          <div style={{flex:1}}>
+            <div style={{fontSize:14,fontWeight:600,color:th.ink0,marginBottom:4}}>每日复盘自动报告</div>
+            <div style={{fontSize:11,color:th.ink2,lineHeight:1.6}}>每天到设定时间自动用 AI 分析当日任务完成情况、用时、亮点和问题，生成一份复盘报告</div>
+          </div>
+          <button onClick={()=>update({autoDaily:!cfg.autoDaily})} style={{width:48,height:26,borderRadius:13,background:cfg.autoDaily?th.accent:th.glass2,position:"relative",border:"none",cursor:"pointer",transition:"background 0.2s",flexShrink:0}}>
+            <div style={{width:20,height:20,borderRadius:"50%",background:"#fff",position:"absolute",top:3,left:cfg.autoDaily?25:3,transition:"left 0.2s",boxShadow:"0 1px 4px rgba(0,0,0,0.3)"}}/>
+          </button>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:10,opacity:cfg.autoDaily?1:0.5}}>
+          <span className="mono" style={{fontSize:10,color:th.ink3,minWidth:60,letterSpacing:"0.08em"}}>触发时间</span>
+          <input type="time" value={cfg.dailyTime||"21:30"} onChange={e=>update({dailyTime:e.target.value})} disabled={!cfg.autoDaily} style={{padding:"7px 10px",fontSize:13,fontWeight:600,border:`1px solid ${th.glassBorder}`,borderRadius:8,background:th.glass1,color:th.ink0,fontFamily:"inherit",fontVariantNumeric:"tabular-nums"}}/>
+          <span style={{fontSize:11,color:th.ink2,flex:1}}>到该时间后打开应用会自动生成（已生成则不重复）</span>
+        </div>
+      </div>
+      
+      {/* 周报告说明 */}
+      <div className="glass" style={{padding:14,borderRadius:11,marginBottom:14}}>
+        <div style={{fontSize:12,fontWeight:600,color:th.ink0,marginBottom:6}}>📊 AI 周报告</div>
+        <div style={{fontSize:11.5,color:th.ink2,lineHeight:1.65}}>本周报告需要在【复盘】页面手动点「生成报告」。会综合一周的任务完成、习惯打卡、模式分析和下周建议。</div>
+      </div>
+      
+      {/* 提示 */}
+      {cfg.lastDailyAt&&(
+        <div style={{padding:"10px 14px",background:th.glass1,borderRadius:9,fontSize:11,color:th.ink3,letterSpacing:"0.04em"}}>
+          上次自动生成：{cfg.lastDailyAt}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Settings({th,themeId,setThemeId,cats,setCats,projects,setProjects,tasks,history,setTasks,setHistory,trash,restoreTask,purgeTask,emptyTrash,tags,addTag,updateTag,removeTag,onClose,user,onSignOut,notifPerm,askNotif,installPWA,installState,today,showToast,catOf}){
   const[tab,setTab]=useState("appearance");
   const exportJSON=()=>{const data={tasks,history,cats,projects,exportedAt:todayStr()};const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=`timelinek-${todayStr()}.json`;a.click();URL.revokeObjectURL(url);showToast("已导出","success");};
@@ -4956,7 +6084,7 @@ function Settings({th,themeId,setThemeId,cats,setCats,projects,setProjects,tasks
           <button onClick={onClose} style={{width:34,height:34,borderRadius:10,background:th.glass2,display:"flex",alignItems:"center",justifyContent:"center"}}><Ic n="close" size={14} color={th.ink2}/></button>
         </div>
         <div style={{padding:"10px 16px",display:"flex",gap:4,overflowX:"auto",borderBottom:`1px solid ${th.glassBorder}`}} className="slim-scroll">
-          {[["appearance","外观","palette"],["account","账户","user"],["categories","分类","layers"],["tags",`标签${tags&&tags.length?` · ${tags.length}`:""}`,"hash"],["sound","声音","bell"],["trash",`回收站${trash&&trash.length?` · ${trash.length}`:""}`,"trash"],["data","数据","download"],["about","关于","info"]].map(([k,l,ic])=>(
+          {[["appearance","外观","palette"],["account","账户","user"],["categories","分类","layers"],["tags",`标签${tags&&tags.length?` · ${tags.length}`:""}`,"hash"],["sound","声音","bell"],["review","复盘","star"],["trash",`回收站${trash&&trash.length?` · ${trash.length}`:""}`,"trash"],["data","数据","download"],["about","关于","info"]].map(([k,l,ic])=>(
             <button key={k} onClick={()=>setTab(k)} className={`view-tab ${tab===k?"active":""}`} style={{flexShrink:0}}>
               <Ic n={ic} size={11} color={tab===k?"#fff":th.ink2}/> {l}
             </button>
@@ -5075,6 +6203,7 @@ function Settings({th,themeId,setThemeId,cats,setCats,projects,setProjects,tasks
           )}
 
           {tab==="sound"&&<SoundSettings th={th} showToast={showToast} notifPerm={notifPerm} askNotif={askNotif}/>}
+          {tab==="review"&&<ReviewSettings th={th} showToast={showToast}/>}
 
           {tab==="trash"&&(
             <div>

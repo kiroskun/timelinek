@@ -2861,7 +2861,7 @@ function MainApp({user}){
       <div className="desktop-layout desktop-only" style={{position:"relative",zIndex:3}}>
         <SideNav th={th} view={view} setView={setView} projects={projects} catOf={catOf} tasks={tasks} today={today} setShowSettings={setShowSettings} setEditProjectId={setEditProjectId} setShowProjectForm={setShowProjectForm} setOpenProjectId={setOpenProjectId} displayName={displayName} hasInsight={getInsights().length>0} onShowLatestInsight={()=>{const all=getInsights();if(all.length>0)setWeeklyInsight(all[all.length-1]);}} unreadInboxCount={unreadInboxCount}/>
         <div style={{display:"flex",flexDirection:"column",minHeight:"100vh"}}>
-          <TopBar th={th} view={view} setView={setView} setShowCmdK={setShowCmdK} setShowTaskForm={setShowTaskForm} syncStatus={syncStatus} displayName={displayName} setShowSettings={setShowSettings} setShowSearch={setShowSearch}/>
+          <TopBar th={th} view={view} setView={setView} setShowCmdK={setShowCmdK} setShowTaskForm={setShowTaskForm} syncStatus={syncStatus} displayName={displayName} setShowSettings={setShowSettings} setShowSearch={setShowSearch} unreadInboxCount={unreadInboxCount}/>
           <main style={{flex:1,overflowY:"auto",padding:"24px 32px 28px",minWidth:0,position:"relative"}} className="slim-scroll">
             {view!=="activity"&&view!=="kanban"&&view!=="projects"&&view!=="month"&&view!=="assistant"&&view!=="inbox"&&<HeroHeader th={th} displayName={displayName} greeting={greeting} dateNum={dateNum} today={today} doneAll={doneAll} totalAll={totalAll} overdueCount={overdueCount} runningTask={runningTask} view={view} projects={projects} latestUnread={latestUnread} unreadInboxCount={unreadInboxCount} setView={setView}/>}
             {notifPerm==="default"&&tasks.some(t=>t.timeStart&&t.due===today)&&<NotifBanner th={th} askNotif={askNotif}/>}
@@ -2875,7 +2875,7 @@ function MainApp({user}){
 
       {/* MOBILE */}
       <div className="mobile-layout mobile-only" style={{position:"relative",zIndex:3}}>
-        <MobileHeader th={th} displayName={displayName} greeting={greeting} dateNum={dateNum} today={today} syncStatus={syncStatus} doneAll={doneAll} totalAll={totalAll} overdueCount={overdueCount} setShowSearch={setShowSearch} runningTask={runningTask} setPomodoroFull={setPomodoroFull}/>
+        <MobileHeader th={th} displayName={displayName} greeting={greeting} dateNum={dateNum} today={today} syncStatus={syncStatus} doneAll={doneAll} totalAll={totalAll} overdueCount={overdueCount} setShowSearch={setShowSearch} runningTask={runningTask} setPomodoroFull={setPomodoroFull} setView={setView} unreadInboxCount={unreadInboxCount}/>
         {notifPerm==="default"&&tasks.some(t=>t.timeStart&&t.due===today)&&<NotifBanner th={th} askNotif={askNotif}/>}
         {showSearch&&<SearchBar th={th} searchQ={searchQ} setQ={setSearchQ} filtered={filtered} onClose={()=>{setShowSearch(false);setSearchQ("");}}/>}
         <MobileViewSwitcher th={th} view={view} setView={setView}/>
@@ -2932,7 +2932,6 @@ function SideNav({th,view,setView,projects,catOf,tasks,today,setShowSettings,set
     {id:"kanban",t:"看板",ic:"layers"},
     {id:"projects",t:"项目",ic:"folder"},
     {id:"assistant",t:"AI 助手",ic:"bot"},
-    {id:"inbox",t:"AI 收件箱",ic:"mail",badge:unreadInboxCount},
     {id:"activity",t:"活动流",ic:"list"},
     {id:"recent",t:"近期完成",ic:"check"},
     {id:"journal",t:"一句日记",ic:"book"},
@@ -2988,22 +2987,16 @@ function SideNav({th,view,setView,projects,catOf,tasks,today,setShowSettings,set
       })}
 
       <div style={{flex:1}}/>
-
-      <button onClick={()=>setShowSettings(true)} className="nav-item" style={{padding:"10px 12px"}}>
-        <div style={{width:26,height:26,borderRadius:"50%",background:"linear-gradient(135deg,#6d5fff,#ec4899)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:11,fontWeight:700,flexShrink:0}}>{(displayName||"M")[0].toUpperCase()}</div>
-        <span style={{flex:1,fontSize:12,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{displayName}</span>
-        <Ic n="settings" size={13} color={th.ink3}/>
-      </button>
     </aside>
   );
 }
 
 // ═══ TOP BAR (desktop) ═══
-function TopBar({th,view,setView,setShowCmdK,setShowTaskForm,syncStatus,displayName,setShowSettings,setShowSearch}){
-  const viewName={today:"今日",tomorrow:"明日",week:"本周",month:"月视图",kanban:"看板",projects:"项目",assistant:"AI 助手",activity:"活动",recent:"近期完成",journal:"一句日记",review:"复盘"};
+function TopBar({th,view,setView,setShowCmdK,setShowTaskForm,syncStatus,displayName,setShowSettings,setShowSearch,unreadInboxCount}){
+  const viewName={today:"今日",tomorrow:"明日",week:"本周",month:"月视图",kanban:"看板",projects:"项目",assistant:"AI 助手",inbox:"AI 收件箱",activity:"活动",recent:"近期完成",journal:"一句日记",review:"复盘"};
   const label=viewName[view]||"今日";
   return(
-    <header style={{padding:"14px 24px",display:"flex",alignItems:"center",gap:14,borderBottom:`1px solid ${th.glassBorder}`,background:th.isDark?"rgba(13,11,26,0.6)":"rgba(255,255,255,0.55)",backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)",position:"sticky",top:0,zIndex:20}}>
+    <header style={{padding:"14px 24px",display:"flex",alignItems:"center",gap:12,borderBottom:`1px solid ${th.glassBorder}`,background:th.isDark?"rgba(13,11,26,0.6)":"rgba(255,255,255,0.55)",backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)",position:"sticky",top:0,zIndex:20}}>
       {/* 当前视图大标题（Serif）*/}
       <h2 className="display" style={{fontSize:18,color:th.ink0,letterSpacing:"-0.02em",minWidth:100}}>
         <em style={{fontStyle:"italic"}} className="gradient-primary">{label}</em>
@@ -3023,6 +3016,26 @@ function TopBar({th,view,setView,setShowCmdK,setShowTaskForm,syncStatus,displayN
       {/* New button */}
       <button onClick={()=>setShowTaskForm(true)} style={{padding:"8px 14px",borderRadius:10,fontSize:12,color:"#fff",fontWeight:600,background:`linear-gradient(135deg,${th.accent},${th.accent3})`,boxShadow:`0 4px 14px ${th.accent}66,inset 0 1px 0 rgba(255,255,255,0.2)`,display:"flex",alignItems:"center",gap:6}}>
         <Ic n="plus" size={13} sw={2}/> 新建
+      </button>
+
+      {/* 分隔 */}
+      <div style={{width:1,height:24,background:th.glassBorder,margin:"0 4px"}}/>
+
+      {/* AI 收件箱按钮 */}
+      <button onClick={()=>setView("inbox")} title="AI 收件箱" className="hover-lift" style={{position:"relative",width:38,height:38,borderRadius:10,border:`1px solid ${th.glassBorder}`,background:view==="inbox"?th.accent+"22":th.glass2,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+        <Ic n="mail" size={15} color={view==="inbox"?th.accent2:th.ink1}/>
+        {unreadInboxCount>0&&<span style={{position:"absolute",top:-4,right:-4,minWidth:18,height:18,padding:"0 5px",borderRadius:9,background:"linear-gradient(135deg,#ec4899,#f43f5e)",color:"#fff",fontSize:10,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 8px rgba(236,72,153,0.55)",letterSpacing:"0.02em",animation:"breathe 2.4s ease-in-out infinite"}}>{unreadInboxCount>99?"99+":unreadInboxCount}</span>}
+      </button>
+
+      {/* 设置 */}
+      <button onClick={()=>setShowSettings(true)} title="设置" className="hover-lift" style={{width:38,height:38,borderRadius:10,border:`1px solid ${th.glassBorder}`,background:th.glass2,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+        <Ic n="settings" size={15} color={th.ink1}/>
+      </button>
+
+      {/* 用户头像 */}
+      <button onClick={()=>setShowSettings(true)} title={displayName} className="hover-lift" style={{display:"flex",alignItems:"center",gap:9,padding:"4px 12px 4px 4px",borderRadius:24,border:`1px solid ${th.glassBorder}`,background:th.glass2,flexShrink:0}}>
+        <div style={{width:30,height:30,borderRadius:"50%",background:`linear-gradient(135deg,${th.accent},${th.accent3})`,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:12,fontWeight:700,flexShrink:0,boxShadow:`0 2px 6px ${th.accent}50`}}>{(displayName||"M")[0].toUpperCase()}</div>
+        <span style={{fontSize:12,color:th.ink1,fontWeight:500,maxWidth:90,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{displayName}</span>
       </button>
     </header>
   );
@@ -3257,7 +3270,7 @@ function Dock({th,tasks,doneAll,totalAll,todayDone,todayTotal,syncStatus}){
 }
 
 // ═══ MOBILE HEADER ═══
-function MobileHeader({th,displayName,greeting,dateNum,today,syncStatus,doneAll,totalAll,overdueCount,setShowSearch,runningTask,setPomodoroFull}){
+function MobileHeader({th,displayName,greeting,dateNum,today,syncStatus,doneAll,totalAll,overdueCount,setShowSearch,runningTask,setPomodoroFull,setView,unreadInboxCount}){
   const rate=totalAll?Math.round(doneAll/totalAll*100):0;
   return(
     <div style={{display:"flex",alignItems:"flex-start",gap:12,marginBottom:18}}>
@@ -3294,6 +3307,10 @@ function MobileHeader({th,displayName,greeting,dateNum,today,syncStatus,doneAll,
         )}
       </div>
       <div style={{display:"flex",gap:6,flexShrink:0,paddingTop:8,marginRight:-2}}>
+        <button onClick={()=>setView&&setView("inbox")} title="AI 收件箱" className="hover-lift" style={{position:"relative",width:36,height:36,borderRadius:10,border:`1px solid ${th.glassBorder}`,background:th.glass2,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <Ic n="mail" size={15} color={th.ink1}/>
+          {unreadInboxCount>0&&<span style={{position:"absolute",top:-4,right:-4,minWidth:18,height:18,padding:"0 5px",borderRadius:9,background:"linear-gradient(135deg,#ec4899,#f43f5e)",color:"#fff",fontSize:10,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 8px rgba(236,72,153,0.55)",animation:"breathe 2.4s ease-in-out infinite"}}>{unreadInboxCount>99?"99+":unreadInboxCount}</span>}
+        </button>
         <HdrBtn th={th} onClick={()=>{setShowSearch(true);window.scrollTo({top:0,behavior:"smooth"});setTimeout(()=>document.getElementById("searchInput")?.focus(),400);}} title="搜索"><Ic n="search" size={16} color={th.ink1}/></HdrBtn>
       </div>
     </div>
@@ -3319,15 +3336,11 @@ function MobileViewSwitcher({th,view,setView}){
 
 // ═══ MOBILE BOTTOM BAR ═══
 function MobileBottomBar({th,view,setView,setShowTaskForm,startPomodoro,setShowSettings,unreadInboxCount}){
-  const navItem=(k,label,icon,onClick,badge)=>{
+  const navItem=(k,label,icon,onClick)=>{
     const act=view===k;
     return(
-      <button key={k} onClick={onClick||(()=>setView(k))} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"8px 0",color:act?th.accent:th.ink3,fontSize:10,letterSpacing:"0.04em",fontWeight:act?600:400,position:"relative"}}>
-        <div style={{position:"relative"}}>
-          <Ic n={icon} size={20} color={act?th.accent:th.ink3}/>
-          {badge>0&&<span style={{position:"absolute",top:-4,right:-8,minWidth:16,height:16,padding:"0 4px",borderRadius:8,background:"linear-gradient(135deg,#ec4899,#f43f5e)",color:"#fff",fontSize:9,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 6px rgba(236,72,153,0.5)",letterSpacing:"0.02em"}}>{badge>99?"99+":badge}</span>}
-        </div>
-        {label}
+      <button key={k} onClick={onClick||(()=>setView(k))} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"8px 0",color:act?th.accent:th.ink3,fontSize:10,letterSpacing:"0.04em",fontWeight:act?600:400}}>
+        <Ic n={icon} size={20} color={act?th.accent:th.ink3}/>{label}
       </button>
     );
   };
@@ -3335,10 +3348,12 @@ function MobileBottomBar({th,view,setView,setShowTaskForm,startPomodoro,setShowS
     <div className="mobile-only" style={{position:"fixed",bottom:0,left:0,right:0,background:th.isDark?"rgba(13,11,26,0.88)":"rgba(255,255,255,0.88)",borderTop:`1px solid ${th.glassBorder}`,backdropFilter:"blur(20px) saturate(180%)",WebkitBackdropFilter:"blur(20px) saturate(180%)",zIndex:100,paddingBottom:"env(safe-area-inset-bottom)"}}>
       <div style={{display:"flex",alignItems:"center",height:60,position:"relative"}}>
         {navItem("today","主页","target")}
-        {navItem("inbox","收件箱","mail",null,unreadInboxCount)}
-        <div style={{width:66}}/>
-        {navItem("assistant","AI","bot")}
         {navItem("projects","项目","folder")}
+        <div style={{width:66}}/>
+        {navItem("assistant","AI 助手","bot")}
+        <button onClick={()=>setShowSettings(true)} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"8px 0",color:th.ink3,fontSize:10,letterSpacing:"0.04em"}}>
+          <Ic n="settings" size={20} color={th.ink3}/>设置
+        </button>
         {/* Floating add (center) */}
         <button onClick={()=>setShowTaskForm(true)} style={{position:"absolute",left:"50%",top:-24,transform:"translateX(-50%)",width:58,height:58,borderRadius:"50%",background:`linear-gradient(135deg,${th.accent},${th.accent3})`,boxShadow:`0 10px 28px ${th.accent}80,inset 0 2px 0 rgba(255,255,255,0.2)`,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",zIndex:2}}>
           <Ic n="plus" size={26} color="#fff" sw={2.5}/>

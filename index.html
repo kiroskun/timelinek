@@ -451,8 +451,30 @@ async function cloudSave(userId,p){
     return{ok:false};
   }catch(e){return{ok:false};}
 }
-function localCacheLoad(){try{const r=localStorage.getItem("tlk_v4");return r?JSON.parse(r):null;}catch{return null;}}
-function localCacheSave(d){try{localStorage.setItem("tlk_v4",JSON.stringify({...d,savedAt:Date.now()}));}catch{}}
+function localCacheLoad(userId){
+  try{
+    const key=userId?`tlk_v4_${userId}`:"tlk_v4";
+    const r=localStorage.getItem(key);
+    return r?JSON.parse(r):null;
+  }catch{return null;}
+}
+function localCacheSave(userId,d){
+  try{
+    const key=userId?`tlk_v4_${userId}`:"tlk_v4";
+    localStorage.setItem(key,JSON.stringify({...d,savedAt:Date.now()}));
+  }catch{}
+}
+// 切账号时清掉所有旧账号的本地缓存（避免数据残留）
+function clearAllUserCache(){
+  try{
+    const keys=[];
+    for(let i=0;i<localStorage.length;i++){
+      const k=localStorage.key(i);
+      if(k&&(k.startsWith("tlk_v4")||k==="tlk_v4"))keys.push(k);
+    }
+    keys.forEach(k=>localStorage.removeItem(k));
+  }catch{}
+}
 function saveTimerState(taskId,startTs,accumMin){try{localStorage.setItem("tlk_timer",JSON.stringify({taskId,startTs,accumMin}));}catch{}}
 function loadTimerState(){try{const r=localStorage.getItem("tlk_timer");return r?JSON.parse(r):null;}catch{return null;}}
 function clearTimerState(){try{localStorage.removeItem("tlk_timer");}catch{}}
@@ -850,32 +872,23 @@ function MainApp({user}){
         t=t.map(tk=>({progress:0,projectId:"",sortKey:tk.sortKey||0,tagIds:tk.tagIds||[],...tk}));
         setTasks(t);setHistory(h);
         setCats((cloud.cats&&cloud.cats.length>0)?cloud.cats.map(c=>({glyph:"■",...c})):DEFAULT_CATEGORIES);
-        // projects 兜底顺序：云端 → 本地缓存 → 默认空
-        if(Array.isArray(cloud.projects)){
-          setProjects(cloud.projects);
-        }else{
-          const cachedP=localCacheLoad()?.projects;
-          setProjects(Array.isArray(cachedP)?cachedP:DEFAULT_PROJECTS);
-        }
-        setTrash(Array.isArray(cloud.trash)?cloud.trash:(localCacheLoad()?.trash||[]));
-        setTags(Array.isArray(cloud.tags)?cloud.tags:(localCacheLoad()?.tags||[]));
-        setJournals(Array.isArray(cloud.journals)?cloud.journals:(localCacheLoad()?.journals||[]));
+        // 关键：云端存在则严格只用云端，不 fallback 到本地缓存（避免跨账号数据污染）
+        setProjects(Array.isArray(cloud.projects)?cloud.projects:DEFAULT_PROJECTS);
+        setTrash(Array.isArray(cloud.trash)?cloud.trash:[]);
+        setTags(Array.isArray(cloud.tags)?cloud.tags:[]);
+        setJournals(Array.isArray(cloud.journals)?cloud.journals:[]);
         setThemeId(cloud.theme_id||"aurora");
         setSyncStatus("synced");
       }else{
-        const cached=localCacheLoad();
-        if(cached){
-          setTasks((cached.tasks||[]).map(tk=>({progress:0,projectId:"",sortKey:tk.sortKey||0,tagIds:tk.tagIds||[],...tk})));
-          setHistory(cached.history||[]);
-          setCats(cached.cats||DEFAULT_CATEGORIES);
-          setProjects(cached.projects||DEFAULT_PROJECTS);
-          setTrash(cached.trash||[]);
-          setTags(cached.tags||[]);
-          setJournals(cached.journals||[]);
-          setThemeId(cached.themeId||"aurora");
-        }else{
-          setTasks([{id:Date.now(),...emptyTask,title:"欢迎使用 Timelinek 👋",content:"试试左侧 ⌘K 打开命令面板 · 或者直接在下面快速添加一条任务",category:"life",priority:"中",due:nowToday,done:false,createdAt:nowToday}]);
-        }
+        // 云端没有该用户的记录（首次登录）→ 完全空，绝不用本地缓存（防止污染）
+        setTasks([{id:Date.now(),...emptyTask,title:"欢迎使用 Timelinek 👋",content:"试试左侧 ⌘K 打开命令面板 · 或者直接在下面快速添加一条任务",category:"life",priority:"中",due:nowToday,done:false,createdAt:nowToday,sortKey:1000}]);
+        setHistory([]);
+        setCats(DEFAULT_CATEGORIES);
+        setProjects(DEFAULT_PROJECTS);
+        setTrash([]);
+        setTags([]);
+        setJournals([]);
+        setThemeId("aurora");
         setSyncStatus("synced");
       }
       const ts=loadTimerState();
@@ -896,7 +909,7 @@ function MainApp({user}){
   useEffect(()=>{
     if(!loaded)return;
     const payload={tasks,history:snapshot(tasks,history,today),cats,projects,trash,tags,journals,themeId};
-    localCacheSave(payload);
+    localCacheSave(user.id,payload);
     if(saveTimer.current)clearTimeout(saveTimer.current);
     saveTimer.current=setTimeout(async()=>{
       setSyncStatus("syncing");
@@ -916,7 +929,7 @@ function MainApp({user}){
         const cloud=await cloudLoad(user.id);
         if(!cloud)return;
         const cloudTime=new Date(cloud.updated_at).getTime();
-        const localTime=localCacheLoad()?.savedAt||0;
+        const localTime=localCacheLoad(user.id)?.savedAt||0;
         if(cloudTime>localTime+1500){
           setTasks((cloud.tasks||[]).map(tk=>({progress:0,projectId:"",sortKey:tk.sortKey||0,tagIds:tk.tagIds||[],...tk})));
           setHistory(cloud.history||[]);
@@ -1145,7 +1158,7 @@ function MainApp({user}){
     setTasks(ts=>ts.map(t=>t.projectId===id?{...t,projectId:""}:t));
   };
 
-  const signOut=async()=>{if(confirm("确定要登出吗？")){clearTimerState();await supabase.auth.signOut();}};
+  const signOut=async()=>{if(confirm("确定要登出吗？")){clearTimerState();clearAllUserCache();await supabase.auth.signOut();}};
   const askNotif=async()=>{const ok=await requestNotify();setNotifPerm(notifPermission());if(ok){showToast("通知已开启","success");sendNotify("通知已开启",{body:"任务开始前 15 分钟会提醒你"});}else showToast("请在浏览器设置中允许通知","info");};
 
   useEffect(()=>{

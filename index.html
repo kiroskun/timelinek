@@ -420,7 +420,7 @@ async function aiPlanToday(tasks,catOf,projOf){
   const curHour=String(now.getHours()).padStart(2,"0")+":"+String(now.getMinutes()).padStart(2,"0");
   const prompt=`你是一个高效的个人时间规划助手。我今天有以下未完成的任务：
 
-${taskList.map(t=>`${t.i}. 【${t.priority}】"${t.title}" 分类:${t.cat}${t.proj?` 项目:${t.proj}`:""}${t.duration?` 预计:${t.duration}分钟`:""}${t.timeStart?` 已设定:${t.timeStart}-${t.timeEnd||"?"}`:""}${t.content?` 备注:${t.content}`:""}`).join("\n")}
+${taskList.map(t=>`[#${t.i}] 【${t.priority}】"${t.title}" 分类:${t.cat}${t.proj?` 项目:${t.proj}`:""}${t.duration?` 预计:${t.duration}分钟`:""}${t.timeStart?` 已设定:${t.timeStart}-${t.timeEnd||"?"}`:""}${t.content?` 备注:${t.content}`:""}`).join("\n")}
 
 当前时间: ${curHour}
 
@@ -432,17 +432,18 @@ ${taskList.map(t=>`${t.i}. 【${t.priority}】"${t.title}" 分类:${t.cat}${t.pr
 3. 任务之间留 5-10 分钟缓冲
 4. 一段简短的整体策略说明（≤80字）
 5. 每个任务给出：建议开始时间、一句话理由（≤25字）
+6. 必须为上面所有 ${taskList.length} 项任务都给出排期建议，缺一不可
 
-严格按以下 JSON 格式返回，不要任何其他文字、不要 markdown：
+严格按以下 JSON 格式返回，不要任何其他文字、不要 markdown 包裹：
 {
   "summary": "整体策略说明",
   "plan": [
-    {"id": 任务id, "time": "HH:MM", "reason": "理由"},
-    ...
+    {"i": 任务编号(就是上面的#数字), "time": "HH:MM", "reason": "理由"},
+    {"i": 任务编号, "time": "HH:MM", "reason": "理由"}
   ]
 }`;
   const content=await callAI([
-    {role:"system",content:"你是一位专业的时间管理顾问，擅长帮人合理规划日程。回复必须严格遵循指定格式。"},
+    {role:"system",content:"你是一位专业的时间管理顾问，擅长帮人合理规划日程。回复必须严格遵循指定 JSON 格式。"},
     {role:"user",content:prompt}
   ],{temperature:0.5,max_tokens:1500});
   // 解析 JSON（容错处理：可能 AI 包了 markdown ```json ... ```）
@@ -454,9 +455,28 @@ ${taskList.map(t=>`${t.i}. 【${t.priority}】"${t.title}" 分类:${t.cat}${t.pr
   if(start>=0&&end>start)jsonStr=jsonStr.slice(start,end+1);
   let parsed;
   try{parsed=JSON.parse(jsonStr);}
-  catch(e){throw new Error("AI 返回格式异常，请重试。原始内容: "+content.slice(0,150));}
+  catch(e){console.error("[AI Parse Error]",content);throw new Error("AI 返回格式异常，请重试");}
   if(!Array.isArray(parsed.plan))throw new Error("AI 返回格式不正确");
-  return parsed;
+  // 把 AI 用的序号 i 映射回真实任务 id（兼容 AI 可能直接给了真实 id 或 i 字段）
+  const remapped=parsed.plan.map(p=>{
+    let realId=null;
+    // 先尝试 i 字段（推荐路径）
+    if(p.i!=null){
+      const idx=Number(p.i)-1;
+      if(idx>=0&&idx<taskList.length)realId=taskList[idx].id;
+    }
+    // 兜底：如果 AI 用了 id 字段，但值很小（说明它还是写的序号）
+    if(realId==null&&p.id!=null){
+      const idx=Number(p.id)-1;
+      if(idx>=0&&idx<taskList.length&&taskList.some(t=>t.id===p.id)){
+        realId=p.id;
+      }else if(idx>=0&&idx<taskList.length){
+        realId=taskList[idx].id;
+      }
+    }
+    return realId==null?null:{id:realId,time:p.time,reason:p.reason};
+  }).filter(Boolean);
+  return{summary:parsed.summary||"",plan:remapped};
 }
 
 // ═══ NATURAL LANGUAGE PARSER ═══

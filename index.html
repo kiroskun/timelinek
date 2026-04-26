@@ -247,13 +247,32 @@ async function callAI(messages,options={}){
     body:JSON.stringify({messages,...options})
   });
   if(!resp.ok){
-    let errMsg=`AI 服务错误 (${resp.status})`;
-    try{const err=await resp.json();if(err.error)errMsg=err.error;}catch{}
+    let errMsg=`HTTP ${resp.status}`;
+    try{
+      const err=await resp.json();
+      // err.error 可能是字符串、对象，或 {message,type,code}
+      if(typeof err.error==="string")errMsg+=" · "+err.error;
+      else if(err.error&&typeof err.error==="object"){
+        errMsg+=" · "+(err.error.message||err.error.type||JSON.stringify(err.error));
+      }else if(err.message){
+        errMsg+=" · "+err.message;
+      }else{
+        errMsg+=" · "+JSON.stringify(err).slice(0,200);
+      }
+    }catch{
+      // 没法 parse json，尝试拿 text
+      try{const txt=await resp.text();if(txt)errMsg+=" · "+txt.slice(0,150);}catch{}
+    }
+    console.error("[AI Error]",errMsg);
     throw new Error(errMsg);
   }
   const result=await resp.json();
   // DeepSeek 返回格式：{choices:[{message:{content:"..."}}]}
-  if(result.error)throw new Error(result.error.message||JSON.stringify(result.error));
+  if(result.error){
+    const errStr=typeof result.error==="string"?result.error:(result.error.message||JSON.stringify(result.error));
+    console.error("[AI Result Error]",result);
+    throw new Error(errStr);
+  }
   return result.choices?.[0]?.message?.content||"";
 }
 

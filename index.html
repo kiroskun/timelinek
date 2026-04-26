@@ -279,7 +279,8 @@ const SOUNDS={
 window.__playSound=(name)=>{const fn=SOUNDS[name];if(fn)fn();};
 
 // ═══ AI Configuration ═══
-const AI_WORKER_URL="https://timelinek-ai.bkchen725.workers.dev/";
+// 同域调用 Cloudflare Pages Functions（无 CORS 预检，国内运营商不拦截）
+const AI_WORKER_URL="/api/ai";
 
 // 通用 AI 调用：通过 Cloudflare Worker 中转到 DeepSeek
 // 参数：messages 数组、可选 options（temperature/max_tokens 等）
@@ -287,16 +288,27 @@ async function callAI(messages,options={}){
   const{data}=await supabase.auth.getSession();
   const token=data.session?.access_token;
   if(!token)throw new Error("未登录，请先登录");
-  const resp=await fetch(AI_WORKER_URL,{
-    method:"POST",
-    headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
-    body:JSON.stringify({messages,...options})
-  });
+  // 60 秒超时控制
+  const controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort(),60000);
+  let resp;
+  try{
+    resp=await fetch(AI_WORKER_URL,{
+      method:"POST",
+      headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
+      body:JSON.stringify({messages,...options}),
+      signal:controller.signal,
+    });
+  }catch(e){
+    clearTimeout(timeout);
+    if(e.name==="AbortError")throw new Error("AI 响应超时（60秒）· 请重试或减少任务数量");
+    throw new Error("网络请求失败: "+(e.message||"未知"));
+  }
+  clearTimeout(timeout);
   if(!resp.ok){
     let errMsg=`HTTP ${resp.status}`;
     try{
       const err=await resp.json();
-      // err.error 可能是字符串、对象，或 {message,type,code}
       if(typeof err.error==="string")errMsg+=" · "+err.error;
       else if(err.error&&typeof err.error==="object"){
         errMsg+=" · "+(err.error.message||err.error.type||JSON.stringify(err.error));
@@ -306,14 +318,12 @@ async function callAI(messages,options={}){
         errMsg+=" · "+JSON.stringify(err).slice(0,200);
       }
     }catch{
-      // 没法 parse json，尝试拿 text
       try{const txt=await resp.text();if(txt)errMsg+=" · "+txt.slice(0,150);}catch{}
     }
     console.error("[AI Error]",errMsg);
     throw new Error(errMsg);
   }
   const result=await resp.json();
-  // DeepSeek 返回格式：{choices:[{message:{content:"..."}}]}
   if(result.error){
     const errStr=typeof result.error==="string"?result.error:(result.error.message||JSON.stringify(result.error));
     console.error("[AI Result Error]",result);

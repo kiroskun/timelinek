@@ -2224,6 +2224,7 @@ function MainApp({user}){
     tags,setTags,tagsMap,addTag,updateTag,removeTag,reorderTask,
     journals,saveJournal,removeJournal,setShowJournalModal,
     aiLoading,requestAiPlan,
+    smartParseAndAdd,aiParseLoading,
     setTrash,nextSortKey,emptyTask,showToast,displayName,
   };
 
@@ -2927,27 +2928,39 @@ function AssistantView({th,tasks,setTasks,projects,cats,catOf,tags,journals,toda
   // 工具实现
   const handlers={
     createTask:(args)=>{
-      const dueOk=args.due||today;
-      let projId=args.projectId||"";
-      if(projId&&!projects.find(p=>p.id===projId))projId="";
-      const newT={
-        id:Date.now()+Math.floor(Math.random()*1000),
-        ...emptyTask,
-        title:args.title||"未命名",
-        content:args.content||"",
-        category:args.category&&cats.find(c=>c.id===args.category)?args.category:"work",
-        priority:args.priority||"中",
-        due:dueOk,
-        timeStart:args.timeStart||"",
-        timeEnd:args.timeEnd||"",
-        duration:args.duration?String(args.duration):"",
-        projectId:projId,
-        sortKey:nextSortKey(),
-        createdAt:today,
-        done:false,
-      };
-      setTasks(t=>[...t,newT]);
-      return{success:true,taskId:newT.id,message:`任务"${newT.title}"已创建`};
+      try{
+        const dueOk=args.due||today;
+        let projId=args.projectId||"";
+        if(projId&&!projects.find(p=>p.id===projId))projId="";
+        // 分类：先按 id 匹配，再按 name 匹配（AI 可能传中文名）
+        let catId="work";
+        if(args.category){
+          const byId=cats.find(c=>c.id===args.category);
+          const byName=cats.find(c=>c.name===args.category);
+          if(byId)catId=byId.id;
+          else if(byName)catId=byName.id;
+        }
+        const newT={
+          id:Date.now()+Math.floor(Math.random()*1000),
+          ...emptyTask,
+          title:args.title||"未命名",
+          content:args.content||"",
+          category:catId,
+          priority:args.priority||"中",
+          due:dueOk,
+          timeStart:args.timeStart||"",
+          timeEnd:args.timeEnd||"",
+          duration:args.duration?String(args.duration):"",
+          projectId:projId,
+          sortKey:nextSortKey(),
+          createdAt:today,
+          done:false,
+        };
+        setTasks(t=>[...t,newT]);
+        return{success:true,taskId:newT.id,message:`任务"${newT.title}"已创建`,task:{id:newT.id,title:newT.title,due:newT.due,timeStart:newT.timeStart,priority:newT.priority,category:cats.find(c=>c.id===catId)?.name||catId}};
+      }catch(e){
+        return{success:false,message:"创建失败: "+(e.message||"未知错误")};
+      }
     },
     updateTask:(args)=>{
       const tid=Number(args.taskId);
@@ -3604,7 +3617,7 @@ function PomodoroFullscreen({th,taskId,runningTask,tasks,nowMin,onClose,toggleTi
 
 // ═══ TASKS VIEW (today / tomorrow / week) ═══
 function TasksView(p){
-  const{th,view,filtered,filter,setFilter,cats,quickTitle,setQuickTitle,quickAdd,setShowTaskForm,setShowTemplates,today,tasks,journals,setShowJournalModal,aiLoading,requestAiPlan}=p;
+  const{th,view,filtered,filter,setFilter,cats,quickTitle,setQuickTitle,quickAdd,setShowTaskForm,setShowTemplates,today,tasks,journals,setShowJournalModal,aiLoading,requestAiPlan,smartParseAndAdd,aiParseLoading}=p;
   // week 视图改用按天分组组件；today / tomorrow 走标准分组展示
   if(view==="week"){
     return<WeekGroupedView {...p}/>;

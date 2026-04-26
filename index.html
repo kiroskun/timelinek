@@ -671,7 +671,9 @@ function executeAssistantTool(name,args,handlers){
 
 // 带工具调用的 AI 对话（多轮 tool call 支持）
 async function callAssistantWithTools(messages,handlers,onProgress){
-  const conversation=[...messages];
+  // 只接受 OpenAI 兼容的 role：system/user/assistant/tool
+  const validRoles=new Set(["system","user","assistant","tool"]);
+  const conversation=messages.filter(m=>m&&validRoles.has(m.role));
   let rounds=0;
   while(rounds<5){ // 最多 5 轮 tool 调用，防死循环
     rounds++;
@@ -688,11 +690,19 @@ async function callAssistantWithTools(messages,handlers,onProgress){
         body:JSON.stringify({messages:conversation,tools:ASSISTANT_TOOLS,tool_choice:"auto",temperature:0.7,max_tokens:1500}),
         signal:ctrl.signal,
       });
-    }catch(e){clearTimeout(tm);if(e.name==="AbortError")throw new Error("AI 响应超时");throw new Error("网络失败: "+e.message);}
+    }catch(e){clearTimeout(tm);if(e.name==="AbortError")throw new Error("AI 响应超时");throw new Error("网络失败: "+(e.message||"未知"));}
     clearTimeout(tm);
     if(!resp.ok){
       let errMsg=`HTTP ${resp.status}`;
-      try{const err=await resp.json();errMsg+=" · "+(err.error?.message||err.error||JSON.stringify(err));}catch{}
+      try{
+        const err=await resp.json();
+        if(typeof err.error==="string")errMsg+=" · "+err.error;
+        else if(err.error?.message)errMsg+=" · "+err.error.message;
+        else if(err.message)errMsg+=" · "+err.message;
+        else errMsg+=" · "+JSON.stringify(err).slice(0,200);
+      }catch{
+        try{const t=await resp.text();if(t)errMsg+=" · "+t.slice(0,200);}catch{}
+      }
       throw new Error(errMsg);
     }
     const result=await resp.json();
@@ -706,15 +716,17 @@ async function callAssistantWithTools(messages,handlers,onProgress){
     // 有 tool_calls，执行它们
     for(const tc of msg.tool_calls){
       let args={};
-      try{args=JSON.parse(tc.function.arguments||"{}");}catch{}
-      onProgress&&onProgress({type:"tool_call",name:tc.function.name,args});
-      const toolResult=executeAssistantTool(tc.function.name,args,handlers);
+      try{args=JSON.parse(tc.function?.arguments||"{}");}catch{}
+      onProgress&&onProgress({type:"tool_call",name:tc.function?.name,args});
+      let toolResult;
+      try{toolResult=executeAssistantTool(tc.function?.name,args,handlers);}
+      catch(e){toolResult={error:e.message||"工具执行异常"};}
       conversation.push({
         role:"tool",
         tool_call_id:tc.id,
-        content:JSON.stringify(toolResult).slice(0,2000),
+        content:JSON.stringify(toolResult||{}).slice(0,2000),
       });
-      onProgress&&onProgress({type:"tool_result",name:tc.function.name,result:toolResult});
+      onProgress&&onProgress({type:"tool_result",name:tc.function?.name,result:toolResult});
     }
   }
   return{content:"已达最大调用轮次",conversation};
@@ -1492,28 +1504,31 @@ function MainApp({user}){
   const[showAiPlanModal,setShowAiPlanModal]=useState(false);
   // 用 AI 解析快速输入文本，解析后直接创建任务
   const smartParseAndAdd=async(text,fallbackDue)=>{
-    if(!text.trim())return;
+    if(!text||!text.trim())return;
     if(aiParseLoading)return;
     setAiParseLoading(true);
     try{
-      const parsed=await aiParseTask(text,today,cats,projects);
+      const parsed=await aiParseTask(text,today,cats||[],projects||[]);
+      if(!parsed||typeof parsed!=="object")throw new Error("AI 返回为空");
       // 把分类名映射回 id
       let catId="work";
-      if(parsed.category){
+      if(parsed.category&&Array.isArray(cats)){
         const c=cats.find(x=>x.name===parsed.category);
         if(c)catId=c.id;
       }
       // 项目名映射回 id
       let projId="";
-      if(parsed.project){
+      if(parsed.project&&Array.isArray(projects)){
         const p=projects.find(x=>x.name===parsed.project);
         if(p)projId=p.id;
       }
       const finalDue=parsed.due||fallbackDue||today;
       // 自动归属活跃项目（如果 AI 没指定 project 且任务的 due 在项目周期内）
-      if(!projId&&activeProject&&finalDue>=activeProject.startDate&&finalDue<=activeProject.endDate){
-        projId=activeProject.id;
-      }
+      try{
+        if(!projId&&activeProject&&activeProject.startDate&&activeProject.endDate&&finalDue>=activeProject.startDate&&finalDue<=activeProject.endDate){
+          projId=activeProject.id;
+        }
+      }catch{}
       const newTask={
         id:Date.now(),
         ...emptyTask,
@@ -1532,13 +1547,19 @@ function MainApp({user}){
       };
       setTasks(t=>[...t,newTask]);
       const detected=[];
-      if(parsed.due&&parsed.due!==today)detected.push(parsed.due===addDays(today,1)?"明天":parsed.due);
-      if(parsed.timeStart)detected.push(parsed.timeStart);
-      if(parsed.duration)detected.push(parsed.duration+"min");
-      if(projId&&projects.find(p=>p.id===projId))detected.push("→ "+projects.find(p=>p.id===projId).name);
+      try{
+        if(parsed.due&&parsed.due!==today)detected.push(parsed.due===addDays(today,1)?"明天":parsed.due);
+        if(parsed.timeStart)detected.push(parsed.timeStart);
+        if(parsed.duration)detected.push(parsed.duration+"min");
+        if(projId&&Array.isArray(projects)){
+          const pr=projects.find(p=>p.id===projId);
+          if(pr)detected.push("→ "+pr.name);
+        }
+      }catch{}
       showToast(`✨ AI 解析成功${detected.length?" · "+detected.join(" · "):""}`,"success");
       setQuickTitle("");
     }catch(err){
+      console.error("[smartParseAndAdd]",err);
       showToast("AI 解析失败: "+(err.message||"请直接添加"),"error");
     }
     setAiParseLoading(false);
@@ -3017,14 +3038,15 @@ function AssistantView({th,tasks,setTasks,projects,cats,catOf,tags,journals,toda
     
     try{
       const sysPrompt=buildAssistantSystemPrompt({tasks,cats,projects,tags,journals,today,displayName});
-      // 构造发送给 API 的消息（含完整附件内容）
+      // 只把 user / assistant 类消息发给 API（system_event 是 UI 显示用的，DeepSeek 不认）
+      const cleanHistory=newMessages.slice(-10).filter(m=>m.role==="user"||m.role==="assistant");
       const apiMsgs=[
         {role:"system",content:sysPrompt},
-        ...newMessages.slice(-10).map((m,i)=>{
-          if(i===newMessages.slice(-10).length-1){
+        ...cleanHistory.map((m,i)=>{
+          if(i===cleanHistory.length-1){
             return{role:"user",content:fullText};
           }
-          return{role:m.role,content:m.content};
+          return{role:m.role,content:m.content||""};
         }),
       ];
       const result=await callAssistantWithTools(apiMsgs,handlers,(progress)=>{

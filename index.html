@@ -232,6 +232,52 @@ const SUPABASE_URL="https://goknkixcdjfuyqdkszoa.supabase.co";
 const SUPABASE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdva25raXhjZGpmdXlxZGtzem9hIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY4NDgyOTcsImV4cCI6MjA5MjQyNDI5N30.2kCxH4iZ-8gxm50caGUV5Y9-vaMjNZD-BjjLuESglKc";
 const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
 
+// ═══ SOUND SYSTEM ═══
+// 用 Web Audio API 程序化生成音色，无外部依赖
+const SOUND_CONFIG_KEY="tlk_sound_v1";
+function getSoundConfig(){
+  try{const r=localStorage.getItem(SOUND_CONFIG_KEY);return r?JSON.parse(r):{enabled:true,volume:0.5,muteUntil:0};}catch{return{enabled:true,volume:0.5,muteUntil:0};}
+}
+function setSoundConfig(c){try{localStorage.setItem(SOUND_CONFIG_KEY,JSON.stringify(c));}catch{}}
+let _audioCtx=null;
+function getAudioCtx(){
+  if(_audioCtx)return _audioCtx;
+  try{_audioCtx=new(window.AudioContext||window.webkitAudioContext)();return _audioCtx;}catch{return null;}
+}
+function playTone(freqs,duration=0.18,type="sine",volume=null){
+  const cfg=getSoundConfig();
+  if(!cfg.enabled||Date.now()<cfg.muteUntil)return;
+  const ctx=getAudioCtx();if(!ctx)return;
+  // iOS Safari 等浏览器要求用户交互后才能 resume
+  if(ctx.state==="suspended"){ctx.resume().catch(()=>{});}
+  const vol=(volume!=null?volume:cfg.volume)*0.4; // 整体降一档防过响
+  const arr=Array.isArray(freqs)?freqs:[freqs];
+  arr.forEach((f,i)=>{
+    const t=ctx.currentTime+i*0.06;
+    const osc=ctx.createOscillator();
+    const gain=ctx.createGain();
+    osc.type=type;
+    osc.frequency.setValueAtTime(f,t);
+    gain.gain.setValueAtTime(0,t);
+    gain.gain.linearRampToValueAtTime(vol,t+0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001,t+duration);
+    osc.connect(gain);gain.connect(ctx.destination);
+    osc.start(t);
+    osc.stop(t+duration+0.02);
+  });
+}
+// 五种场景音色
+const SOUNDS={
+  taskDone:()=>playTone([523.25,659.25,783.99],0.16,"sine"), // C5-E5-G5 上行三和弦（清脆完成感）
+  taskStart:()=>playTone([440,554.37],0.14,"sine"), // A4-C#5（柔和起笔）
+  taskRemind:()=>playTone([880,880],0.12,"triangle"), // 双 A5（提醒铃声）
+  pomoStart:()=>playTone([392,523.25,659.25],0.18,"triangle"), // G4-C5-E5（番茄起航）
+  pomoEnd:()=>playTone([783.99,587.33,392],0.22,"sine"), // G5-D5-G4 下行（番茄结束放松）
+  testBeep:()=>playTone([660],0.12,"sine"), // 测试音
+};
+// 暴露给所有组件用
+window.__playSound=(name)=>{const fn=SOUNDS[name];if(fn)fn();};
+
 // ═══ AI Configuration ═══
 const AI_WORKER_URL="https://timelinek-ai.bkchen725.workers.dev/";
 
@@ -554,8 +600,27 @@ function getGreeting(){const h=new Date().getHours();return GREETINGS.find(g=>h>
 function weekdayCN(date){const d=new Date(date);return["周日","周一","周二","周三","周四","周五","周六"][d.getDay()];}
 function weekdayEN(date){const d=new Date(date);return["SUN","MON","TUE","WED","THU","FRI","SAT"][d.getDay()];}
 function monthName(date){return new Date(date).toLocaleDateString("en-US",{month:"short"}).toUpperCase();}
-function isOverdue(task,nowToday,nowMins){
-  if(task.done||!task.due)return false;
+function isOverdue(task,nowToday,nowMins,projects){
+  if(task.done)return false;
+  // 优先：如果任务挂在有 endDate 的项目下，以项目 endDate 为准
+  if(task.projectId&&Array.isArray(projects)){
+    const proj=projects.find(p=>p.id===task.projectId);
+    if(proj&&proj.endDate){
+      // 项目还没结束 → 不逾期（即使 due 早）
+      if(nowToday<=proj.endDate){
+        // 但如果 task.due 也设置了，且早于今天，仍然逾期（任务自己的截止）
+        if(task.due&&task.due<nowToday)return true;
+        if(task.due===nowToday&&task.timeEnd){
+          const em=timeToMin(task.timeEnd);
+          if(em!=null&&em<nowMins)return true;
+        }
+        return false;
+      }
+      // 项目已经结束 → 逾期
+      return true;
+    }
+  }
+  if(!task.due)return false;
   if(task.due<nowToday)return true;
   if(task.due===nowToday&&task.timeEnd){
     const em=timeToMin(task.timeEnd);
@@ -769,39 +834,111 @@ function AuthScreen(){
     }catch(err){setMsg("err:"+(err.message||"操作失败"));}
     setLoading(false);
   };
-  const inpS={width:"100%",padding:"13px 16px",border:"1.5px solid rgba(255,255,255,0.1)",borderRadius:12,fontSize:14,outline:"none",background:"rgba(255,255,255,0.04)",color:"#fff",transition:"all 0.15s",letterSpacing:"0.01em"};
+  // Paper Garden 配色：温暖米白 + 麦黄 + 植物绿 + 锈红 emphasis
+  const PG={
+    bg:"#f5f1e8", // 米白纸色
+    paper:"#fbf8ef", // 浅纸面
+    ink0:"#3d3528", // 深褐墨
+    ink1:"#5d533f", 
+    ink2:"#8a7d65",
+    ink3:"#b8aa8c",
+    border:"rgba(61,53,40,0.12)",
+    borderStrong:"rgba(61,53,40,0.22)",
+    accent:"#7a8c5c", // 植物绿
+    accent2:"#b59a4a", // 麦黄
+    accent3:"#a85a3c", // 锈红
+    glow:"rgba(122,140,92,0.15)",
+  };
+  const inpS={width:"100%",padding:"14px 16px",border:`1.5px solid ${PG.border}`,borderRadius:12,fontSize:14,outline:"none",background:"#fff",color:PG.ink0,transition:"all 0.18s",letterSpacing:"0.01em",fontFamily:"inherit"};
   return(
-    <div style={{minHeight:"100vh",background:"radial-gradient(ellipse at 20% 0%,#1a1638 0%,#0d0b1a 50%,#07060d 100%)",display:"flex",alignItems:"center",justifyContent:"center",padding:20,position:"relative",color:"#fff","--accent":"#6d5fff","--accent-2":"#c4b5fd","--accent-3":"#ec4899","--orb-a":"#6d5fff","--orb-b":"#ec4899","--orb-c":"#22d3ee"}}>
-      <div className="tl-aurora"><div className="orb oa"/><div className="orb ob"/><div className="orb oc"/></div>
-      <ParticleField count={24}/>
-      <div className="tl-grain"/>
+    <div style={{minHeight:"100vh",background:PG.bg,display:"flex",alignItems:"center",justifyContent:"center",padding:20,position:"relative",color:PG.ink0,overflow:"hidden"}}>
+      {/* 纸质背景纹理 */}
+      <div style={{position:"absolute",inset:0,opacity:0.5,backgroundImage:`radial-gradient(${PG.ink3} 0.5px,transparent 0.5px)`,backgroundSize:"24px 24px",pointerEvents:"none"}}/>
+      
+      {/* SVG 装饰：花园元素（左下角植物 + 右上角太阳）*/}
+      <svg style={{position:"absolute",bottom:-40,left:-40,width:340,height:340,opacity:0.32,pointerEvents:"none"}} viewBox="0 0 340 340" fill="none">
+        {/* 远景树 */}
+        <ellipse cx="200" cy="280" rx="80" ry="14" fill={PG.accent} opacity="0.3"/>
+        <path d="M 130 260 Q 130 180 100 160 Q 70 180 70 260" stroke={PG.accent} strokeWidth="1.5" fill={PG.accent} fillOpacity="0.18"/>
+        <path d="M 100 260 L 100 220" stroke={PG.ink1} strokeWidth="1" opacity="0.4"/>
+        {/* 草丛 */}
+        <path d="M 40 280 Q 50 230 60 280" stroke={PG.accent} strokeWidth="1.5" fill="none"/>
+        <path d="M 65 280 Q 75 240 85 280" stroke={PG.accent} strokeWidth="1.5" fill="none"/>
+        <path d="M 95 280 Q 105 250 115 280" stroke={PG.accent} strokeWidth="1.2" fill="none"/>
+        {/* 花朵 */}
+        <g opacity="0.7">
+          <circle cx="160" cy="240" r="3" fill={PG.accent3}/>
+          <circle cx="155" cy="244" r="3" fill={PG.accent3} opacity="0.8"/>
+          <circle cx="165" cy="244" r="3" fill={PG.accent3} opacity="0.8"/>
+          <circle cx="160" cy="248" r="3" fill={PG.accent3} opacity="0.8"/>
+          <circle cx="160" cy="244" r="2" fill={PG.accent2}/>
+          <line x1="160" y1="248" x2="160" y2="270" stroke={PG.accent} strokeWidth="1"/>
+        </g>
+        <g opacity="0.6">
+          <circle cx="220" cy="250" r="2.5" fill={PG.accent2}/>
+          <circle cx="215" cy="253" r="2.5" fill={PG.accent2} opacity="0.7"/>
+          <circle cx="225" cy="253" r="2.5" fill={PG.accent2} opacity="0.7"/>
+          <line x1="220" y1="255" x2="220" y2="275" stroke={PG.accent} strokeWidth="1"/>
+        </g>
+      </svg>
+      <svg style={{position:"absolute",top:-30,right:-30,width:260,height:260,opacity:0.24,pointerEvents:"none"}} viewBox="0 0 260 260" fill="none">
+        {/* 太阳 */}
+        <circle cx="200" cy="60" r="32" fill={PG.accent2} opacity="0.4"/>
+        <circle cx="200" cy="60" r="20" fill={PG.accent2}/>
+        {/* 鸟 */}
+        <path d="M 100 80 Q 110 70 120 80 M 120 80 Q 130 70 140 80" stroke={PG.ink1} strokeWidth="1.5" fill="none"/>
+        <path d="M 60 110 Q 70 100 80 110" stroke={PG.ink1} strokeWidth="1.2" fill="none" opacity="0.6"/>
+        {/* 云 */}
+        <path d="M 30 50 Q 40 40 55 45 Q 65 40 75 50 Q 85 45 90 55 Q 75 60 30 55 Z" fill={PG.ink1} opacity="0.15"/>
+      </svg>
+
       <div style={{width:"100%",maxWidth:420,position:"relative",zIndex:10}}>
-        <div style={{textAlign:"center",marginBottom:36}}>
-          <h1 className="display" style={{fontSize:86,letterSpacing:"-0.055em",lineHeight:1,marginBottom:14,filter:"drop-shadow(0 12px 40px rgba(109,95,255,0.55))",whiteSpace:"nowrap"}}>
-            <span style={{color:"#fff"}}>Time</span><em style={{fontStyle:"italic",fontWeight:400,background:"linear-gradient(135deg,#c4b5fd 0%,#6d5fff 45%,#ec4899 100%)",WebkitBackgroundClip:"text",backgroundClip:"text",WebkitTextFillColor:"transparent",color:"transparent",paddingRight:"0.18em",marginRight:"-0.02em",display:"inline-block"}}>linek</em>
+        {/* Logo */}
+        <div style={{textAlign:"center",marginBottom:30}}>
+          <h1 className="display" style={{fontSize:78,letterSpacing:"-0.045em",lineHeight:1,marginBottom:12,whiteSpace:"nowrap"}}>
+            <span style={{color:PG.ink0}}>Time</span>
+            <em style={{fontStyle:"italic",fontWeight:400,color:PG.accent3,paddingRight:"0.1em"}}>linek</em>
           </h1>
-          <p style={{fontSize:13,color:"#a8a2c4",letterSpacing:"0.06em"}}>任务 · 时间线 · 项目 · 专注 · 云同步</p>
+          <p style={{fontSize:13,color:PG.ink2,letterSpacing:"0.08em",fontStyle:"italic"}}>纸 · 笔 · 时间 · 一座小花园</p>
         </div>
-        <div className="glass-strong" style={{borderRadius:20,padding:28,background:"linear-gradient(180deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))",border:"1px solid rgba(255,255,255,0.1)",boxShadow:"0 24px 60px rgba(0,0,0,0.4),inset 0 1px 0 rgba(255,255,255,0.08)"}}>
-          <h2 className="display" style={{fontSize:26,color:"#fff",marginBottom:20,letterSpacing:"-0.02em"}}>{mode==="login"?"登录":"创建账户"}</h2>
+
+        {/* 卡片 */}
+        <div style={{borderRadius:18,padding:32,background:PG.paper,border:`1.5px solid ${PG.border}`,boxShadow:`0 1px 0 rgba(255,255,255,0.6) inset, 0 12px 40px rgba(61,53,40,0.08), 0 2px 4px rgba(61,53,40,0.04)`,position:"relative"}}>
+          {/* 装饰角标 */}
+          <div style={{position:"absolute",top:14,right:18,fontSize:10,color:PG.ink3,letterSpacing:"0.2em",fontFamily:"monospace",fontWeight:600}}>·  PG  ·</div>
+          
+          <h2 className="display" style={{fontSize:28,color:PG.ink0,marginBottom:6,letterSpacing:"-0.02em",fontWeight:700}}>
+            {mode==="login"?<>欢迎<em style={{fontStyle:"italic",color:PG.accent3}}>回来</em></>:<>开启<em style={{fontStyle:"italic",color:PG.accent3}}>新页</em></>}
+          </h2>
+          <p style={{fontSize:12.5,color:PG.ink2,marginBottom:22,letterSpacing:"0.02em"}}>
+            {mode==="login"?"在你的小花园继续耕种":"种下第一颗种子"}
+          </p>
+
           <form onSubmit={submit}>
-            <div style={{marginBottom:12}}>
-              <input value={username} onChange={e=>setUsername(e.target.value)} type="text" placeholder="账户名" autoComplete="username" maxLength={32} style={inpS} onFocus={e=>e.target.style.borderColor="#6d5fff"} onBlur={e=>e.target.style.borderColor="rgba(255,255,255,0.1)"}/>
-              {mode==="signup"&&username.length>0&&!usernameValid&&<div style={{fontSize:11,color:"#f5a524",marginTop:6,paddingLeft:4}}>账户名至少 2 个字符</div>}
+            <div style={{marginBottom:14}}>
+              <label style={{fontSize:10,color:PG.ink2,letterSpacing:"0.18em",fontWeight:600,fontFamily:"monospace",display:"block",marginBottom:6,paddingLeft:2}}>USERNAME</label>
+              <input value={username} onChange={e=>setUsername(e.target.value)} type="text" placeholder="你的名字" autoComplete="username" maxLength={32} style={inpS} onFocus={e=>{e.target.style.borderColor=PG.accent;e.target.style.boxShadow=`0 0 0 3px ${PG.glow}`;}} onBlur={e=>{e.target.style.borderColor=PG.border;e.target.style.boxShadow="none";}}/>
+              {mode==="signup"&&username.length>0&&!usernameValid&&<div style={{fontSize:11,color:PG.accent3,marginTop:6,paddingLeft:2,fontStyle:"italic"}}>名字需要至少 2 个字符</div>}
             </div>
-            <div style={{marginBottom:20}}>
-              <input value={password} onChange={e=>setPassword(e.target.value)} type="password" placeholder="密码" autoComplete={mode==="login"?"current-password":"new-password"} style={inpS} onFocus={e=>e.target.style.borderColor="#6d5fff"} onBlur={e=>e.target.style.borderColor="rgba(255,255,255,0.1)"}/>
-              {mode==="signup"&&password.length>0&&!passwordValid&&<div style={{fontSize:11,color:"#f5a524",marginTop:6,paddingLeft:4}}>密码至少 6 位</div>}
+            <div style={{marginBottom:22}}>
+              <label style={{fontSize:10,color:PG.ink2,letterSpacing:"0.18em",fontWeight:600,fontFamily:"monospace",display:"block",marginBottom:6,paddingLeft:2}}>PASSWORD</label>
+              <input value={password} onChange={e=>setPassword(e.target.value)} type="password" placeholder="6 位以上" autoComplete={mode==="login"?"current-password":"new-password"} style={inpS} onFocus={e=>{e.target.style.borderColor=PG.accent;e.target.style.boxShadow=`0 0 0 3px ${PG.glow}`;}} onBlur={e=>{e.target.style.borderColor=PG.border;e.target.style.boxShadow="none";}}/>
+              {mode==="signup"&&password.length>0&&!passwordValid&&<div style={{fontSize:11,color:PG.accent3,marginTop:6,paddingLeft:2,fontStyle:"italic"}}>密码需要至少 6 位</div>}
             </div>
-            <button type="submit" disabled={!canSubmit} style={{width:"100%",padding:"14px",background:canSubmit?"linear-gradient(135deg,#6d5fff,#ec4899)":"rgba(255,255,255,0.06)",color:canSubmit?"#fff":"#6b6589",borderRadius:12,fontSize:14,fontWeight:700,letterSpacing:"0.06em",transition:"all 0.2s var(--ease)",boxShadow:canSubmit?"0 8px 28px rgba(109,95,255,0.5)":"none"}}>
-              {loading?<span className="spin">○</span>:mode==="login"?"登 录":"注 册"}
+            <button type="submit" disabled={!canSubmit} style={{width:"100%",padding:"14px",background:canSubmit?`linear-gradient(135deg,${PG.accent} 0%,${PG.accent2} 100%)`:"#e8e2d3",color:canSubmit?"#fff":PG.ink3,borderRadius:12,fontSize:14,fontWeight:700,letterSpacing:"0.1em",transition:"all 0.2s var(--ease)",boxShadow:canSubmit?`0 6px 20px ${PG.accent}40`:"none",cursor:canSubmit?"pointer":"not-allowed"}}>
+              {loading?<span className="spin">○</span>:mode==="login"?"打 开 花 园":"开 始 种 植"}
             </button>
           </form>
-          {msg&&<div className="fadeIn" style={{marginTop:14,padding:"11px 14px",background:msg.startsWith("err")?"rgba(255,93,122,0.1)":"rgba(16,217,163,0.1)",color:msg.startsWith("err")?"#ff5d7a":"#10d9a3",fontSize:12,borderRadius:10,lineHeight:1.6,border:`1px solid ${msg.startsWith("err")?"rgba(255,93,122,0.25)":"rgba(16,217,163,0.25)"}`}}>{msg.slice(4)}</div>}
-          <div style={{marginTop:18,textAlign:"center",fontSize:12,color:"#a8a2c4"}}>
-            {mode==="login"?"还没有账户？":"已有账户？"}
-            <button type="button" onClick={()=>{setMode(mode==="login"?"signup":"login");setMsg("");}} style={{color:"#c4b5fd",fontWeight:600,marginLeft:6,padding:0,fontSize:12}}>{mode==="login"?"立即注册":"去登录"}</button>
+          {msg&&<div className="fadeIn" style={{marginTop:14,padding:"11px 14px",background:msg.startsWith("err")?"rgba(168,90,60,0.08)":"rgba(122,140,92,0.1)",color:msg.startsWith("err")?PG.accent3:PG.accent,fontSize:12,borderRadius:10,lineHeight:1.6,border:`1px solid ${msg.startsWith("err")?"rgba(168,90,60,0.2)":"rgba(122,140,92,0.2)"}`}}>{msg.slice(4)}</div>}
+          <div style={{marginTop:20,textAlign:"center",fontSize:12.5,color:PG.ink2}}>
+            {mode==="login"?"第一次来？":"已经有账户？"}
+            <button type="button" onClick={()=>{setMode(mode==="login"?"signup":"login");setMsg("");}} style={{color:PG.accent,fontWeight:600,marginLeft:6,padding:0,fontSize:12.5,textDecoration:"underline",textUnderlineOffset:"3px"}}>{mode==="login"?"开个账户":"去登录"}</button>
           </div>
+        </div>
+
+        {/* 底部小语 */}
+        <div style={{textAlign:"center",marginTop:24,fontSize:11,color:PG.ink3,letterSpacing:"0.06em",fontStyle:"italic"}}>
+          一日一记 · 一花一世界
         </div>
       </div>
     </div>
@@ -1155,7 +1292,7 @@ function MainApp({user}){
         if(notifiedIds.current.has(t.id))return;
         const taskMin=timeToMin(t.timeStart);if(taskMin==null)return;
         const diff=taskMin-now;
-        if(diff>0&&diff<=15){sendNotify(`即将开始：${t.title}`,{body:`${diff} 分钟后（${t.timeStart}）开始`,tag:"upcoming-"+t.id});notifiedIds.current.add(t.id);}
+        if(diff>0&&diff<=15){sendNotify(`即将开始：${t.title}`,{body:`${diff} 分钟后（${t.timeStart}）开始`,tag:"upcoming-"+t.id});window.__playSound&&window.__playSound("taskRemind");notifiedIds.current.add(t.id);}
       });
     };
     check();const interval=setInterval(check,60000);
@@ -1189,11 +1326,23 @@ function MainApp({user}){
     });
   };
 
+  // 找到"当前活跃项目"：startDate <= today <= endDate 的项目，多个取最早 startDate 的
+  const activeProject=useMemo(()=>{
+    const candidates=projects.filter(p=>p.startDate&&p.endDate&&p.startDate<=today&&today<=p.endDate);
+    if(candidates.length===0)return null;
+    return[...candidates].sort((a,b)=>a.startDate.localeCompare(b.startDate))[0];
+  },[projects,today]);
+
   const quickAdd=(dueDate)=>{
     if(!quickTitle.trim())return;
     const parsed=parseNL(quickTitle,today);
     const baseDue=parsed.due||dueDate||today;
     const finalTitle=parsed.title||quickTitle.trim();
+    // 自动归属活跃项目（如果任务的 due 在项目周期内）
+    let autoProj="";
+    if(activeProject&&baseDue>=activeProject.startDate&&baseDue<=activeProject.endDate){
+      autoProj=activeProject.id;
+    }
     const newTask={
       id:Date.now(),
       ...emptyTask,
@@ -1203,6 +1352,7 @@ function MainApp({user}){
       timeEnd:parsed.timeEnd||"",
       duration:parsed.duration||"",
       priority:parsed.priority||"中",
+      projectId:autoProj,
       sortKey:nextSortKey(),
       createdAt:today,
       done:false
@@ -1213,6 +1363,7 @@ function MainApp({user}){
     if(parsed.due&&parsed.due!==today)detected.push(parsed.due===addDays(today,1)?"明天":parsed.due);
     if(parsed.timeStart)detected.push(parsed.timeStart);
     if(parsed.duration)detected.push(parsed.duration+"min");
+    if(autoProj)detected.push("→ "+activeProject.name);
     showToast(detected.length?`已添加 · ${detected.join(" · ")}`:"已添加","success");
   };
   const addOrEditTask=()=>{
@@ -1234,6 +1385,7 @@ function MainApp({user}){
     }));
     setPoppingId(id);setTimeout(()=>setPoppingId(null),340);
     if(task&&!task.done){
+      window.__playSound&&window.__playSound("taskDone");
       const rest=tasks.filter(t=>!t.done&&t.id!==id).length;
       if(rest===0&&tasks.length>0)showToast("今日任务全部完成 🎉","success");
     }
@@ -1297,6 +1449,7 @@ function MainApp({user}){
       const accum=task?.actualMin||0;const startTs=Date.now();
       setRunningId(id);setRunningStartTs(startTs);setRunningAccumMin(accum);
       saveTimerState(id,startTs,accum);showToast("开始计时","success");
+      window.__playSound&&window.__playSound("taskStart");
     }
   };
 
@@ -1400,7 +1553,7 @@ function MainApp({user}){
   // 全量统计（HeroHeader / MobileHeader 使用）
   const totalAll=tasks.length;
   const doneAll=tasks.filter(t=>t.done).length;
-  const overdueCount=tasks.filter(t=>isOverdue(t,today,nowMin)).length;
+  const overdueCount=tasks.filter(t=>isOverdue(t,today,nowMin,projects)).length;
   const runningTask=tasks.find(t=>t.id===runningId);
 
   // CSS vars 应用主题
@@ -1461,7 +1614,7 @@ function MainApp({user}){
         <div style={{display:"flex",flexDirection:"column",minHeight:"100vh"}}>
           <TopBar th={th} view={view} setView={setView} setShowCmdK={setShowCmdK} setShowTaskForm={setShowTaskForm} syncStatus={syncStatus} displayName={displayName} setShowSettings={setShowSettings} setShowSearch={setShowSearch}/>
           <main style={{flex:1,overflowY:"auto",padding:"24px 32px 28px",minWidth:0,position:"relative"}} className="slim-scroll">
-            {view!=="activity"&&view!=="kanban"&&view!=="projects"&&view!=="month"&&<HeroHeader th={th} displayName={displayName} greeting={greeting} dateNum={dateNum} today={today} doneAll={doneAll} totalAll={totalAll} overdueCount={overdueCount} runningTask={runningTask} view={view}/>}
+            {view!=="activity"&&view!=="kanban"&&view!=="projects"&&view!=="month"&&<HeroHeader th={th} displayName={displayName} greeting={greeting} dateNum={dateNum} today={today} doneAll={doneAll} totalAll={totalAll} overdueCount={overdueCount} runningTask={runningTask} view={view} projects={projects}/>}
             {notifPerm==="default"&&tasks.some(t=>t.timeStart&&t.due===today)&&<NotifBanner th={th} askNotif={askNotif}/>}
             {showSearch&&<SearchBar th={th} searchQ={searchQ} setQ={setSearchQ} filtered={filtered} onClose={()=>{setShowSearch(false);setSearchQ("");}}/>}
             <ViewRouter {...vp}/>
@@ -1608,7 +1761,7 @@ function TopBar({th,view,setView,setShowCmdK,setShowTaskForm,syncStatus,displayN
 }
 
 // ═══ HERO ═══
-function HeroHeader({th,displayName,greeting,dateNum,today,doneAll,totalAll,overdueCount,runningTask,view}){
+function HeroHeader({th,displayName,greeting,dateNum,today,doneAll,totalAll,overdueCount,runningTask,view,projects}){
   const rate=totalAll?doneAll/totalAll:0;
   const isTomorrow=view==="tomorrow";
   const tomorrow=isTomorrow?addDays(today,1):today;
@@ -1719,7 +1872,7 @@ function RightRail({th,tasks,history,catOf,today,nowMin,runningTask,toggleTimer,
           <div style={{display:"flex",flexDirection:"column",gap:6}}>
             {upcoming.map(t=>{
               const c=catOf(t.category);
-              const overdue=isOverdue(t,today,nowMin);
+              const overdue=isOverdue(t,today,nowMin,projects);
               return(
                 <div key={t.id} className="glass" style={{padding:"9px 12px",borderRadius:10,display:"flex",alignItems:"center",gap:10}}>
                   <span style={{width:5,height:26,borderRadius:3,background:overdue?"#ff5d7a":c.color,boxShadow:`0 0 6px ${c.color}80`,flexShrink:0}}/>
@@ -2328,6 +2481,16 @@ function PomodoroFullscreen({th,taskId,runningTask,tasks,nowMin,onClose,toggleTi
   const pct=Math.min(elapsed/dur,1);
   const isRunning=runningTask&&runningTask.id===task.id;
 
+  // 进入番茄钟时如果没在跑，提示音；时间到 (rem===0) 时响起结束音
+  const pomoEndedRef=useRef(false);
+  useEffect(()=>{
+    if(rem<=0&&isRunning&&!pomoEndedRef.current){
+      pomoEndedRef.current=true;
+      window.__playSound&&window.__playSound("pomoEnd");
+    }
+    if(rem>0)pomoEndedRef.current=false;
+  },[rem,isRunning]);
+
   const onReset=()=>{
     if(!confirm("重置当前番茄钟？已计时的时长会清零"))return;
     // 若正在跑，先停掉
@@ -2340,6 +2503,10 @@ function PomodoroFullscreen({th,taskId,runningTask,tasks,nowMin,onClose,toggleTi
     if(isRunning)toggleTimer(task.id);
     if(!task.done)toggleTask(task.id);
     onClose();
+  };
+  const onPlayPause=()=>{
+    if(!isRunning)window.__playSound&&window.__playSound("pomoStart");
+    toggleTimer(task.id);
   };
 
   return(
@@ -2387,7 +2554,7 @@ function PomodoroFullscreen({th,taskId,runningTask,tasks,nowMin,onClose,toggleTi
             <Ic n="repeat" size={20}/>
             <span style={{position:"absolute",bottom:-20,fontSize:10,color:"rgba(255,255,255,0.55)",letterSpacing:"0.08em",whiteSpace:"nowrap"}}>重置</span>
           </button>
-          <button onClick={()=>toggleTimer(task.id)} style={{width:88,height:88,borderRadius:"50%",background:"linear-gradient(135deg,#6d5fff,#ec4899)",boxShadow:"0 10px 40px rgba(109,95,255,0.6),inset 0 2px 0 rgba(255,255,255,0.3)",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",position:"relative"}}>
+          <button onClick={onPlayPause} style={{width:88,height:88,borderRadius:"50%",background:"linear-gradient(135deg,#6d5fff,#ec4899)",boxShadow:"0 10px 40px rgba(109,95,255,0.6),inset 0 2px 0 rgba(255,255,255,0.3)",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",position:"relative"}}>
             <Ic n={isRunning?"pause":"play"} size={28}/>
             <span style={{position:"absolute",bottom:-20,fontSize:10,color:"rgba(255,255,255,0.7)",letterSpacing:"0.08em",whiteSpace:"nowrap",fontWeight:500}}>{isRunning?"暂停":"开始"}</span>
           </button>
@@ -2621,7 +2788,7 @@ function TaskGroupedList({list,th,...rest}){
 function TaskCard({task:t,th,catOf,projOf,today,nowMin,poppingId,runningId,toggleTask,toggleTimer,removeTask,startEdit,expanded,setExpanded,updateProgress,selectedIds,toggleSelect,inSelectMode,reorderTask,tagsMap,allowDrag}){
   const c=catOf(t.category);
   const p=t.projectId?projOf(t.projectId):null;
-  const overdue=isOverdue(t,today,nowMin);
+  const overdue=isOverdue(t,today,nowMin,p?[p]:null);
   const isRunning=runningId===t.id;
   const popping=poppingId===t.id;
   const exp=expanded[t.id];
@@ -3157,6 +3324,37 @@ function ProjectsView({th,projects,tasks,catOf,setShowProjectForm,setEditProject
               <h1 className="display" style={{fontSize:34,color:th.ink0,letterSpacing:"-0.02em"}}>{p.name}</h1>
             </div>
             {p.description&&<div style={{fontSize:13,color:th.ink2,lineHeight:1.6,marginBottom:16}}>{p.description}</div>}
+            {/* 周期信息 */}
+            {(p.startDate||p.endDate)&&(()=>{
+              const inProgress=p.startDate&&p.endDate&&p.startDate<=today&&today<=p.endDate;
+              const finished=p.endDate&&today>p.endDate;
+              const notYet=p.startDate&&today<p.startDate;
+              const totalDays=p.startDate&&p.endDate?Math.max(1,Math.round((new Date(p.endDate)-new Date(p.startDate))/86400000)+1):null;
+              const passedDays=p.startDate?Math.max(0,Math.round((new Date(today)-new Date(p.startDate))/86400000)):null;
+              const dayPct=totalDays&&passedDays!=null?Math.min(100,Math.max(0,(passedDays/totalDays)*100)):0;
+              return(
+                <div style={{padding:"10px 12px",borderRadius:10,background:th.glass1,border:`1px solid ${th.glassBorder}`,marginBottom:12}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                    <Ic n="calendar" size={12} color={p.color}/>
+                    <span className="mono" style={{fontSize:11,color:th.ink2,letterSpacing:"0.04em"}}>
+                      {p.startDate||"—"} → {p.endDate||"—"}
+                    </span>
+                    <div style={{flex:1}}/>
+                    <span className="mono" style={{fontSize:10,color:inProgress?p.color:finished?"#ff5d7a":th.ink3,fontWeight:600,letterSpacing:"0.06em"}}>
+                      {inProgress?"进行中":finished?"已结束":notYet?"未开始":""}
+                    </span>
+                  </div>
+                  {totalDays&&(
+                    <div style={{display:"flex",alignItems:"center",gap:8,fontSize:10,color:th.ink3}}>
+                      <div style={{flex:1,height:4,borderRadius:2,background:th.glass2,overflow:"hidden"}}>
+                        <div style={{width:`${dayPct}%`,height:"100%",background:p.color,boxShadow:`0 0 4px ${p.color}80`}}/>
+                      </div>
+                      <span className="mono tnum">{passedDays}/{totalDays}d</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
             <div style={{height:6,borderRadius:3,background:th.glass2,overflow:"hidden",marginBottom:12}}>
               <div style={{width:`${p.progress*100}%`,height:"100%",background:`linear-gradient(90deg,${p.color},${p.color}aa)`,boxShadow:`0 0 8px ${p.color}80`,transition:"width 0.5s var(--ease)"}}/>
             </div>
@@ -3305,11 +3503,12 @@ function ProjectsView({th,projects,tasks,catOf,setShowProjectForm,setEditProject
 // ═══ PROJECT FORM ═══
 function ProjectForm({th,projects,editProjectId,onSave,onCancel}){
   const existing=editProjectId?projects.find(p=>p.id===editProjectId):null;
-  const[form,setForm]=useState(existing?{...existing}:{name:"",description:"",color:"#6d5fff",glyph:"◆"});
+  const[form,setForm]=useState(existing?{...existing}:{name:"",description:"",color:"#6d5fff",glyph:"◆",startDate:"",endDate:""});
   const setF=(k,v)=>setForm({...form,[k]:v});
   const ok=form.name?.trim();
   const colors=["#6d5fff","#ec4899","#22d3ee","#10d9a3","#f5a524","#ff5d7a","#c4b5fd","#a8a2c4"];
   const glyphs=["◆","●","▲","✦","■","◈","★","◉","✧"];
+  const dateOk=!form.startDate||!form.endDate||form.startDate<=form.endDate;
   return(
     <div className="fadeIn modal-overlay" onClick={onCancel}>
       <div onClick={e=>e.stopPropagation()} className="slideUp glass-strong" style={{borderRadius:20,maxWidth:460,width:"100%",padding:24,maxHeight:"90vh",overflow:"auto"}}>
@@ -3322,6 +3521,22 @@ function ProjectForm({th,projects,editProjectId,onSave,onCancel}){
         </div>
         <input value={form.name} onChange={e=>setF("name",e.target.value)} placeholder="项目名称" autoFocus={typeof window!=="undefined"&&window.innerWidth>=900} className="inp" style={{marginBottom:12,fontSize:15,fontWeight:500}}/>
         <textarea value={form.description||""} onChange={e=>setF("description",e.target.value)} placeholder="简介（可选）" rows={2} className="inp" style={{marginBottom:16,resize:"vertical"}}/>
+        
+        {/* 项目周期 */}
+        <label className="mono" style={{display:"block",fontSize:10,color:th.ink3,marginBottom:8,letterSpacing:"0.15em",fontWeight:600}}>项目周期（可选）· 期间新建任务自动归属此项目</label>
+        <div style={{display:"flex",gap:8,marginBottom:6,alignItems:"center"}}>
+          <input type="date" value={form.startDate||""} onChange={e=>setF("startDate",e.target.value)} className="inp" style={{flex:1,fontSize:13,padding:"10px 12px"}}/>
+          <span style={{color:th.ink3,fontSize:14}}>→</span>
+          <input type="date" value={form.endDate||""} onChange={e=>setF("endDate",e.target.value)} className="inp" style={{flex:1,fontSize:13,padding:"10px 12px"}}/>
+        </div>
+        {!dateOk&&<div style={{fontSize:11,color:"#ff5d7a",marginBottom:6,paddingLeft:2,fontStyle:"italic"}}>结束日期不能早于开始日期</div>}
+        {(form.startDate||form.endDate)&&(
+          <div style={{fontSize:11,color:th.ink2,marginBottom:14,paddingLeft:2,letterSpacing:"0.02em"}}>
+            💡 周期内的逾期检查会以该日期范围为准
+          </div>
+        )}
+        {!form.startDate&&!form.endDate&&<div style={{height:14}}/>}
+        
         <label className="mono" style={{display:"block",fontSize:10,color:th.ink3,marginBottom:8,letterSpacing:"0.15em",fontWeight:600}}>颜色</label>
         <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap"}}>
           {colors.map(c=>(
@@ -3336,7 +3551,7 @@ function ProjectForm({th,projects,editProjectId,onSave,onCancel}){
         </div>
         <div style={{display:"flex",gap:10}}>
           <button onClick={onCancel} className="glass" style={{flex:1,padding:13,borderRadius:12,fontSize:13,color:th.ink2,fontWeight:500}}>取消</button>
-          <button onClick={()=>onSave(form)} disabled={!ok} style={{flex:2,padding:13,background:ok?`linear-gradient(135deg,${form.color},${form.color}aa)`:th.glass2,color:ok?"#fff":th.ink3,borderRadius:12,fontSize:13,fontWeight:600,letterSpacing:"0.04em",boxShadow:ok?`0 8px 20px ${form.color}66`:"none"}}>{existing?"保 存":"创 建"}</button>
+          <button onClick={()=>dateOk&&onSave(form)} disabled={!ok||!dateOk} style={{flex:2,padding:13,background:ok&&dateOk?`linear-gradient(135deg,${form.color},${form.color}aa)`:th.glass2,color:ok&&dateOk?"#fff":th.ink3,borderRadius:12,fontSize:13,fontWeight:600,letterSpacing:"0.04em",boxShadow:ok&&dateOk?`0 8px 20px ${form.color}66`:"none"}}>{existing?"保 存":"创 建"}</button>
         </div>
       </div>
     </div>
@@ -4611,6 +4826,85 @@ function AllHistory({th,tasks,history,catOf,today}){
 }
 
 // ═══ SETTINGS ═══
+// ═══ SOUND SETTINGS ═══
+function SoundSettings({th,showToast,notifPerm,askNotif}){
+  const[cfg,setCfg]=useState(()=>getSoundConfig());
+  const update=(patch)=>{const next={...cfg,...patch};setCfg(next);setSoundConfig(next);};
+  const muteOpts=[
+    {label:"不静音",ms:0},
+    {label:"30 分钟",ms:30*60*1000},
+    {label:"1 小时",ms:60*60*1000},
+    {label:"3 小时",ms:3*60*60*1000},
+    {label:"今天",ms:Math.max(0,new Date(new Date().setHours(23,59,59,0)).getTime()-Date.now())},
+  ];
+  const muteRemain=cfg.muteUntil>Date.now()?Math.ceil((cfg.muteUntil-Date.now())/60000):0;
+  const SOUND_CARDS=[
+    {id:"taskDone",label:"任务完成",desc:"勾选完成任务时（清脆三和弦）",icon:"check"},
+    {id:"taskStart",label:"开始计时",desc:"任务开始计时（柔和起笔）",icon:"play"},
+    {id:"taskRemind",label:"任务提醒",desc:"15 分钟前提醒（双声铃）",icon:"bell"},
+    {id:"pomoStart",label:"番茄起航",desc:"番茄钟开始（向上和弦）",icon:"timer"},
+    {id:"pomoEnd",label:"番茄结束",desc:"番茄钟时间到（下行放松）",icon:"check"},
+  ];
+  return(
+    <div style={{padding:"4px 0"}}>
+      {/* 总开关 + 音量 */}
+      <div className="glass" style={{padding:18,borderRadius:14,marginBottom:14}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+          <div>
+            <div style={{fontSize:14,fontWeight:600,color:th.ink0,marginBottom:2}}>声音通知</div>
+            <div style={{fontSize:11,color:th.ink2}}>{cfg.enabled?"已开启 · 关键事件会播放音效":"已关闭"}</div>
+          </div>
+          <button onClick={()=>update({enabled:!cfg.enabled})} style={{width:48,height:26,borderRadius:13,background:cfg.enabled?th.accent:th.glass2,position:"relative",border:"none",cursor:"pointer",transition:"background 0.2s"}}>
+            <div style={{width:20,height:20,borderRadius:"50%",background:"#fff",position:"absolute",top:3,left:cfg.enabled?25:3,transition:"left 0.2s",boxShadow:"0 1px 4px rgba(0,0,0,0.3)"}}/>
+          </button>
+        </div>
+        {/* 音量滑块 */}
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6,opacity:cfg.enabled?1:0.4}}>
+          <span className="mono" style={{fontSize:10,color:th.ink3,minWidth:50,letterSpacing:"0.08em"}}>音量</span>
+          <input type="range" min="0" max="1" step="0.1" value={cfg.volume} onChange={e=>update({volume:Number(e.target.value)})} disabled={!cfg.enabled} style={{flex:1,accentColor:th.accent}}/>
+          <span className="mono tnum" style={{fontSize:11,color:th.ink2,minWidth:40,textAlign:"right"}}>{Math.round(cfg.volume*100)}%</span>
+        </div>
+        <div style={{display:"flex",gap:6,marginTop:10,flexWrap:"wrap"}}>
+          {muteOpts.map(o=>(
+            <button key={o.label} onClick={()=>update({muteUntil:o.ms?Date.now()+o.ms:0})} className="view-tab" style={{flexShrink:0,fontSize:10,padding:"5px 10px"}}>{o.label}</button>
+          ))}
+        </div>
+        {muteRemain>0&&(
+          <div style={{marginTop:10,padding:"8px 12px",background:th.glass1,borderRadius:8,fontSize:11,color:th.ink2}}>
+            🔕 已静音 · 剩余 {muteRemain<60?`${muteRemain} 分钟`:`${Math.floor(muteRemain/60)} 小时 ${muteRemain%60} 分钟`}
+          </div>
+        )}
+      </div>
+      
+      {/* 各场景测试 */}
+      <div className="mono" style={{fontSize:10,letterSpacing:"0.18em",color:th.ink3,marginBottom:10,fontWeight:600}}>各场景音效（点击试听）</div>
+      <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:14}}>
+        {SOUND_CARDS.map(c=>(
+          <button key={c.id} onClick={()=>{getAudioCtx()&&getAudioCtx().resume();window.__playSound&&window.__playSound(c.id);}} className="glass hover-lift" style={{padding:"12px 16px",borderRadius:11,display:"flex",alignItems:"center",gap:12,cursor:"pointer",textAlign:"left"}}>
+            <div style={{width:36,height:36,borderRadius:9,background:th.glass2,display:"flex",alignItems:"center",justifyContent:"center"}}><Ic n={c.icon} size={14} color={th.accent}/></div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:13,fontWeight:500,color:th.ink0}}>{c.label}</div>
+              <div style={{fontSize:11,color:th.ink2,marginTop:1}}>{c.desc}</div>
+            </div>
+            <Ic n="play" size={11} color={th.ink2}/>
+          </button>
+        ))}
+      </div>
+
+      {/* 浏览器通知 */}
+      <div className="mono" style={{fontSize:10,letterSpacing:"0.18em",color:th.ink3,marginBottom:10,fontWeight:600}}>浏览器通知</div>
+      <div className="glass" style={{padding:14,borderRadius:11,display:"flex",alignItems:"center",gap:12}}>
+        <Ic n="bell" size={16} color={notifPerm==="granted"?"#10d9a3":th.ink2}/>
+        <div style={{flex:1}}>
+          <div style={{fontSize:12,fontWeight:600,color:th.ink0}}>系统通知 {notifPerm==="granted"?"已开启":notifPerm==="denied"?"已拒绝":"未开启"}</div>
+          <div style={{fontSize:11,color:th.ink2,marginTop:1}}>{notifPerm==="granted"?"任务即将开始时会推送通知":"任务时间到时不会主动提醒"}</div>
+        </div>
+        {notifPerm!=="granted"&&<button onClick={askNotif} style={{padding:"7px 14px",background:th.accent,color:"#fff",borderRadius:8,fontSize:11,fontWeight:600}}>{notifPerm==="denied"?"前往设置":"开启"}</button>}
+      </div>
+    </div>
+  );
+}
+
 function Settings({th,themeId,setThemeId,cats,setCats,projects,setProjects,tasks,history,setTasks,setHistory,trash,restoreTask,purgeTask,emptyTrash,tags,addTag,updateTag,removeTag,onClose,user,onSignOut,notifPerm,askNotif,installPWA,installState,today,showToast,catOf}){
   const[tab,setTab]=useState("appearance");
   const exportJSON=()=>{const data={tasks,history,cats,projects,exportedAt:todayStr()};const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=`timelinek-${todayStr()}.json`;a.click();URL.revokeObjectURL(url);showToast("已导出","success");};
@@ -4652,7 +4946,7 @@ function Settings({th,themeId,setThemeId,cats,setCats,projects,setProjects,tasks
           <button onClick={onClose} style={{width:34,height:34,borderRadius:10,background:th.glass2,display:"flex",alignItems:"center",justifyContent:"center"}}><Ic n="close" size={14} color={th.ink2}/></button>
         </div>
         <div style={{padding:"10px 16px",display:"flex",gap:4,overflowX:"auto",borderBottom:`1px solid ${th.glassBorder}`}} className="slim-scroll">
-          {[["appearance","外观","palette"],["account","账户","user"],["categories","分类","layers"],["tags",`标签${tags&&tags.length?` · ${tags.length}`:""}`,"hash"],["trash",`回收站${trash&&trash.length?` · ${trash.length}`:""}`,"trash"],["data","数据","download"],["about","关于","info"]].map(([k,l,ic])=>(
+          {[["appearance","外观","palette"],["account","账户","user"],["categories","分类","layers"],["tags",`标签${tags&&tags.length?` · ${tags.length}`:""}`,"hash"],["sound","声音","bell"],["trash",`回收站${trash&&trash.length?` · ${trash.length}`:""}`,"trash"],["data","数据","download"],["about","关于","info"]].map(([k,l,ic])=>(
             <button key={k} onClick={()=>setTab(k)} className={`view-tab ${tab===k?"active":""}`} style={{flexShrink:0}}>
               <Ic n={ic} size={11} color={tab===k?"#fff":th.ink2}/> {l}
             </button>
@@ -4769,6 +5063,8 @@ function Settings({th,themeId,setThemeId,cats,setCats,projects,setProjects,tasks
               )}
             </div>
           )}
+
+          {tab==="sound"&&<SoundSettings th={th} showToast={showToast} notifPerm={notifPerm} askNotif={askNotif}/>}
 
           {tab==="trash"&&(
             <div>

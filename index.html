@@ -247,6 +247,28 @@ function getReviewConfig(){
   try{const r=localStorage.getItem(REVIEW_CONFIG_KEY);return r?JSON.parse(r):{autoDaily:false,dailyTime:"21:30",lastDailyAt:""};}catch{return{autoDaily:false,dailyTime:"21:30",lastDailyAt:""};}
 }
 function setReviewConfig(c){try{localStorage.setItem(REVIEW_CONFIG_KEY,JSON.stringify(c));}catch{}}
+
+// ═══ 个人画像系统 ═══
+// 存储格式：{identity, workPattern, habits[], goals[], strengths[], blockers[], updatedAt, version}
+const PROFILE_KEY="tlk_profile_v1";
+function getProfile(){
+  try{const r=localStorage.getItem(PROFILE_KEY);return r?JSON.parse(r):null;}catch{return null;}
+}
+function setProfile(p){try{localStorage.setItem(PROFILE_KEY,JSON.stringify(p));}catch{}}
+
+// 历史洞察推送记录 [{id, type, date, content, dismissed, applied}]
+const INSIGHTS_KEY="tlk_insights_v1";
+function getInsights(){
+  try{const r=localStorage.getItem(INSIGHTS_KEY);return r?JSON.parse(r):[];}catch{return[];}
+}
+function setInsights(arr){try{localStorage.setItem(INSIGHTS_KEY,JSON.stringify(arr.slice(-30)));}catch{}}
+
+// 上次画像更新时间 + 上次洞察推送日期
+const META_KEY="tlk_ai_meta_v1";
+function getAiMeta(){
+  try{const r=localStorage.getItem(META_KEY);return r?JSON.parse(r):{lastProfileAt:"",lastWeeklyAt:""};}catch{return{lastProfileAt:"",lastWeeklyAt:""};}
+}
+function setAiMeta(m){try{localStorage.setItem(META_KEY,JSON.stringify(m));}catch{}}
 let _audioCtx=null;
 function getAudioCtx(){
   if(_audioCtx)return _audioCtx;
@@ -556,8 +578,25 @@ function buildAssistantSystemPrompt(ctx){
   const activeProjects=projects.filter(p=>p.startDate&&p.endDate&&p.startDate<=today&&today<=p.endDate);
   const recentJournals=journals.slice(-3).map(j=>`${j.date}: ${j.wish||""}${j.mood?" "+j.mood:""}`).filter(Boolean);
   const catLines=cats.map(c=>`${c.id}=${c.name}`).join(", ");
+  // 注入个人画像（如有）
+  const profile=getProfile();
+  const profileBlock=profile?`
+
+# 你认识的这个人（个人画像 v${profile.version||1}）
+${profile.identity?`身份：${profile.identity}`:""}
+${profile.workPattern?.peakTime?`高效时段：${profile.workPattern.peakTime}`:""}
+${profile.workPattern?.lowTime?`低能时段：${profile.workPattern.lowTime}`:""}
+${profile.workPattern?.weekRhythm?`一周节奏：${profile.workPattern.weekRhythm}`:""}
+${Array.isArray(profile.strengths)&&profile.strengths.length?`优势：${profile.strengths.join("；")}`:""}
+${Array.isArray(profile.blockers)&&profile.blockers.length?`阻碍：${profile.blockers.join("；")}`:""}
+${Array.isArray(profile.habits)&&profile.habits.length?`习惯：${profile.habits.join("；")}`:""}
+${Array.isArray(profile.goals)&&profile.goals.length?`目标：${profile.goals.join("；")}`:""}
+${Array.isArray(profile.preferences)&&profile.preferences.length?`偏好：${profile.preferences.join("；")}`:""}
+
+【重要】根据上述画像，给出**针对这个人**的建议，避免通用空话。比如知道用户上午高效就建议把硬任务排上午，知道用户拖延高优任务就主动询问"是不是太大了"。`:"";
   
   return`你是 Timelinek 应用的 AI 助手，帮 ${displayName||"用户"} 管理任务和规划生活。
+${profileBlock}
 
 # 当前数据快照（${today}）
 - 总任务：${tasks.length}（已完成 ${tasks.length-undone.length}，未完成 ${undone.length}）
@@ -961,6 +1000,296 @@ ${weekJournals.map(j=>`${j.date}: ${j.wish||""}${j.mood?" "+j.mood:""}`).join("\
   catch(e){console.error("[aiWeeklyReport]",content);throw new Error("AI 返回格式异常");}
 }
 
+// ═══ AI 个人画像分析 ═══
+// 读取最近 30 天数据，分析用户特征，输出/更新画像
+async function aiAnalyzeProfile({tasks,history,journals,catOf,projOf,today,existingProfile}){
+  // 收集近 30 天数据
+  const days30=[];
+  for(let i=29;i>=0;i--)days30.push(addDays(today,-i));
+  
+  const dailyData=days30.map(d=>{
+    const h=history.find(x=>x.date===d);
+    const ht=h?h.tasks:[];
+    const live=tasks.filter(t=>t.due===d||t.completedAt===d);
+    const seen=new Set();
+    const all=[];
+    live.forEach(t=>{if(!seen.has(t.id)){seen.add(t.id);all.push(t);}});
+    ht.forEach(t=>{if(!seen.has(t.id)){seen.add(t.id);all.push(t);}});
+    const done=all.filter(t=>t.done||ht.find(x=>x.id===t.id&&x.done));
+    return{
+      date:d,
+      total:all.length,
+      done:done.length,
+      duration:Math.round(all.reduce((s,t)=>s+(t.actualMin||0),0)),
+      doneTitles:done.slice(0,5).map(t=>t.title),
+      undoneHigh:all.filter(t=>!t.done&&t.priority==="高").length,
+    };
+  });
+  
+  // 时段统计：根据 history 和 task.actualMin
+  const hourBuckets={morning:0,noon:0,afternoon:0,evening:0,night:0};
+  const hourLabels={morning:"6-12",noon:"12-14",afternoon:"14-18",evening:"18-22",night:"22-6"};
+  tasks.forEach(t=>{
+    if(!t.timeStart||!t.done)return;
+    const[h]=t.timeStart.split(":").map(Number);
+    if(h>=6&&h<12)hourBuckets.morning++;
+    else if(h>=12&&h<14)hourBuckets.noon++;
+    else if(h>=14&&h<18)hourBuckets.afternoon++;
+    else if(h>=18&&h<22)hourBuckets.evening++;
+    else hourBuckets.night++;
+  });
+  
+  // 周几统计
+  const weekdayBuckets=[0,0,0,0,0,0,0]; // 周一到周日，完成率
+  const weekdayCounts=[0,0,0,0,0,0,0];
+  dailyData.forEach(d=>{
+    const dow=(new Date(d.date).getDay()+6)%7;
+    if(d.total>0){weekdayBuckets[dow]+=d.done/d.total;weekdayCounts[dow]++;}
+  });
+  const weekdayRates=weekdayBuckets.map((s,i)=>weekdayCounts[i]?Math.round(s/weekdayCounts[i]*100):0);
+  
+  // 拖延任务 (high priority but undone for 3+ days)
+  const stuck=tasks.filter(t=>!t.done&&t.priority==="高"&&t.due&&t.due<today&&(today>addDays(t.due,3))).slice(0,5);
+  
+  // 习惯类
+  const habits=tasks.filter(t=>t.repeat).slice(0,8);
+  const habitStats=habits.map(habit=>{
+    let total=0,done=0;
+    days30.forEach(d=>{
+      const h=history.find(x=>x.date===d);
+      const ht=h?h.tasks:tasks.filter(t=>t.due===d);
+      const found=ht.find(t=>t.title===habit.title&&t.repeat);
+      if(found){total++;if(found.done)done++;}
+    });
+    return{title:habit.title,rate:total?Math.round(done/total*100):0,total};
+  });
+  
+  // 项目活跃度
+  const projActivity={};
+  dailyData.forEach(d=>{
+    const h=history.find(x=>x.date===d.date);
+    const ht=h?h.tasks:tasks.filter(t=>t.due===d.date);
+    ht.forEach(t=>{
+      if(!t.projectId)return;
+      const p=projOf(t.projectId);if(!p)return;
+      if(!projActivity[p.name])projActivity[p.name]={total:0,done:0};
+      projActivity[p.name].total++;
+      if(t.done)projActivity[p.name].done++;
+    });
+  });
+  
+  // 日记摘要（最近 14 条）
+  const recentJournals=(journals||[]).slice(-14).filter(j=>j.wish);
+  
+  const prompt=`分析这位用户的近 30 天行为模式，更新「个人画像」。
+
+# 现有画像
+${existingProfile?JSON.stringify(existingProfile,null,2):"（首次分析，从零构建）"}
+
+# 30 天数据汇总
+- 平均每日任务量：${(dailyData.reduce((s,d)=>s+d.total,0)/30).toFixed(1)} 项
+- 平均完成率：${Math.round(dailyData.reduce((s,d)=>s+(d.total?d.done/d.total:0),0)/30*100)}%
+- 累计专注：${Math.round(dailyData.reduce((s,d)=>s+d.duration,0)/60)} 小时
+- 活跃天数：${dailyData.filter(d=>d.total>0).length}/30
+
+# 时段分布（已完成任务的开始时间）
+- 早晨 6-12: ${hourBuckets.morning} 项
+- 中午 12-14: ${hourBuckets.noon} 项
+- 下午 14-18: ${hourBuckets.afternoon} 项
+- 傍晚 18-22: ${hourBuckets.evening} 项
+- 深夜 22-6: ${hourBuckets.night} 项
+
+# 周几完成率（周一到周日）
+${["周一","周二","周三","周四","周五","周六","周日"].map((d,i)=>`${d}: ${weekdayRates[i]}%`).join(", ")}
+
+# 习惯打卡（30 天内）
+${habitStats.map(h=>`${h.title}: ${h.rate}% (${h.total}天有记录)`).join("\n")||"无每日重复任务"}
+
+# 项目参与
+${Object.entries(projActivity).map(([k,v])=>`${k}: ${v.done}/${v.total}`).join("\n")||"无"}
+
+# 卡住的高优任务（已逾期 3+ 天）
+${stuck.map(t=>`「${t.title}」(${t.due}, 已 ${Math.round((new Date(today)-new Date(t.due))/86400000)}天)`).join("\n")||"无"}
+
+# 最近的日记片段
+${recentJournals.map(j=>`${j.date}: ${j.wish}`).join("\n")||"无"}
+
+# 最近完成的代表性任务（近 7 天）
+${dailyData.slice(-7).map(d=>d.doneTitles.length?`${d.date}: ${d.doneTitles.join(", ")}`:"").filter(Boolean).join("\n")||"无"}
+
+# 任务
+基于以上数据，输出/更新个人画像。如果是首次分析，从空画像构建。如果有现有画像，**保留稳定的部分，只更新有新证据的字段**。
+
+输出格式（严格 JSON，不要 markdown）：
+{
+  "identity": "用一句话描述这个人的核心身份（如：'独立创业者，专注 SaaS 产品'、'在校学生，准备考研'、'家庭主妇，重视生活品质'）",
+  "workPattern": {
+    "peakTime": "高效时段（如：'上午 9-12 点'、'晚上 21-23 点'）",
+    "lowTime": "低能量时段",
+    "weekRhythm": "一周节奏特征（如：'周一启动慢，周四产出最高'）"
+  },
+  "strengths": ["3-5 条用户做得好的地方，具体到事例"],
+  "blockers": ["2-4 条阻碍用户的模式（如：'高优任务拖延倾向'、'晚上 11 点后效率下降但仍硬撑'）"],
+  "habits": ["稳定的习惯（如：'每天晨跑'、'睡前阅读'）"],
+  "goals": ["从任务/项目/日记中推断的中长期目标，1-3 条"],
+  "preferences": ["其他特征（如：'偏好下午做创造性工作'、'对完美主义有倾向'）"]
+}
+
+注意：
+- 没有证据的字段可以是空数组或空字符串
+- "blockers" 要具体且建设性，避免负面标签
+- "identity" 必须基于数据推断，不要编造`;
+
+  const content=await callAI([
+    {role:"system",content:"你是擅长行为模式分析的心理画像师。基于数据精准推断，不夸大不编造。严格 JSON 输出。"},
+    {role:"user",content:prompt}
+  ],{temperature:0.4,max_tokens:1500});
+  
+  let jsonStr=content.trim();
+  const m=jsonStr.match(/```(?:json)?\s*([\s\S]+?)\s*```/);
+  if(m)jsonStr=m[1];
+  const start=jsonStr.indexOf("{"),end=jsonStr.lastIndexOf("}");
+  if(start>=0&&end>start)jsonStr=jsonStr.slice(start,end+1);
+  try{
+    const profile=JSON.parse(jsonStr);
+    return{...profile,updatedAt:new Date().toISOString(),version:1};
+  }catch(e){console.error("[aiAnalyzeProfile]",content);throw new Error("画像分析失败");}
+}
+
+// ═══ AI 主动周度洞察 ═══
+async function aiWeeklyInsight({tasks,history,journals,catOf,projOf,today,profile}){
+  // 取本周 + 上周数据做对比
+  const thisMon=addDays(today,-((new Date(today).getDay()+6)%7));
+  const lastMon=addDays(thisMon,-7);
+  const thisWeekDates=[];for(let i=0;i<7;i++)thisWeekDates.push(addDays(thisMon,i));
+  const lastWeekDates=[];for(let i=0;i<7;i++)lastWeekDates.push(addDays(lastMon,i));
+  
+  const summarize=(dates)=>{
+    let total=0,done=0,dur=0;
+    const cats={},projs={};
+    dates.forEach(d=>{
+      if(d>today)return;
+      const h=history.find(x=>x.date===d);
+      const ht=h?h.tasks:tasks.filter(t=>t.due===d);
+      ht.forEach(t=>{
+        total++;
+        if(t.done)done++;
+        dur+=Math.round(t.actualMin||0);
+        const c=catOf(t.category);
+        if(c){cats[c.name]=(cats[c.name]||0)+(t.done?1:0);}
+        if(t.projectId){
+          const p=projOf(t.projectId);
+          if(p)projs[p.name]=(projs[p.name]||0)+(t.done?1:0);
+        }
+      });
+    });
+    return{total,done,dur,cats,projs,rate:total?Math.round(done/total*100):0};
+  };
+  
+  const thisW=summarize(thisWeekDates);
+  const lastW=summarize(lastWeekDates);
+  
+  // 拖延检测
+  const procrastinated=tasks.filter(t=>!t.done&&t.due&&t.due<today).map(t=>{
+    const days=Math.round((new Date(today)-new Date(t.due))/86400000);
+    return{title:t.title,daysOverdue:days,priority:t.priority,projectName:t.projectId?(projOf(t.projectId)?.name||""):""};
+  }).sort((a,b)=>b.daysOverdue-a.daysOverdue).slice(0,5);
+  
+  // 项目进度风险
+  const projects=[];
+  const projDeadlines=[];
+  if(projOf){
+    // 从 tasks 间接收集项目
+    const projIds=new Set(tasks.filter(t=>t.projectId).map(t=>t.projectId));
+    projIds.forEach(pid=>{
+      const p=projOf(pid);
+      if(!p||!p.endDate||p.endDate<today)return;
+      const projTasks=tasks.filter(t=>t.projectId===pid);
+      const doneN=projTasks.filter(t=>t.done).length;
+      const totN=projTasks.length;
+      const daysLeft=Math.round((new Date(p.endDate)-new Date(today))/86400000);
+      if(totN>0)projDeadlines.push({name:p.name,done:doneN,total:totN,daysLeft,rate:Math.round(doneN/totN*100)});
+    });
+  }
+  
+  // 习惯断档
+  const habits=tasks.filter(t=>t.repeat);
+  const habitGaps=habits.map(habit=>{
+    let curStreak=0,broke=false;
+    const sorted=[...thisWeekDates,...lastWeekDates].sort();
+    for(let i=sorted.length-1;i>=0;i--){
+      const d=sorted[i];
+      if(d>today)continue;
+      const h=history.find(x=>x.date===d);
+      const ht=h?h.tasks:tasks.filter(t=>t.due===d);
+      const found=ht.find(t=>t.title===habit.title&&t.repeat);
+      if(found&&found.done)curStreak++;
+      else{broke=true;break;}
+    }
+    return{title:habit.title,currentStreak:curStreak,brokeRecently:broke&&curStreak<3};
+  }).filter(h=>h.brokeRecently);
+  
+  const recentJournals=(journals||[]).slice(-7).filter(j=>j.wish);
+  
+  const prompt=`你是用户的私人成长教练。基于本周观察，给出**主动洞察**和**具体建议**。
+
+# 用户画像
+${profile?JSON.stringify(profile,null,2):"（暂无画像）"}
+
+# 本周 vs 上周
+- 完成任务：${thisW.done}/${thisW.total} (${thisW.rate}%) vs 上周 ${lastW.done}/${lastW.total} (${lastW.rate}%)
+- 专注时长：${Math.round(thisW.dur/60*10)/10}h vs ${Math.round(lastW.dur/60*10)/10}h
+- 本周分类分布：${Object.entries(thisW.cats).map(([k,v])=>`${k}=${v}`).join(", ")||"无"}
+- 本周项目进展：${Object.entries(thisW.projs).map(([k,v])=>`${k}=${v}`).join(", ")||"无"}
+
+# 拖延中的任务
+${procrastinated.map(p=>`「${p.title}」(${p.priority}优, 逾期${p.daysOverdue}天${p.projectName?", 属于"+p.projectName:""})`).join("\n")||"无"}
+
+# 项目进度
+${projDeadlines.map(p=>`${p.name}: ${p.done}/${p.total} (${p.rate}%), 还剩 ${p.daysLeft} 天`).join("\n")||"无"}
+
+# 习惯断档
+${habitGaps.map(h=>`${h.title} 已断档（当前连续 ${h.currentStreak} 天）`).join("\n")||"无"}
+
+# 最近日记
+${recentJournals.map(j=>`${j.date}: ${j.wish}`).join("\n")||"无"}
+
+# 任务
+生成一份**早晨问候式洞察**。要求：
+1. 开头一句友好问候，结合用户画像称呼（如果有 identity 信息）
+2. 选 3-4 条**最有价值**的观察 — 不是全部数据复述，而是有"啊我没意识到"感的发现
+3. 提出 2-3 条**具体可执行**的本周建议（不要空话如"加油"，要"周三下午把 X 任务做了"）
+4. 如果有项目风险，明确指出
+5. 语气温暖但不油腻，像懂你的老友
+
+输出格式（严格 JSON）：
+{
+  "greeting": "开场问候，1-2 句",
+  "observations": [
+    {"icon": "📊/💡/⚠️/🎯/🌱 等", "text": "观察内容，1-2 句"}
+  ],
+  "suggestions": [
+    {"action": "建议的具体行动，可执行", "reason": "为什么建议这个"}
+  ],
+  "closing": "结尾鼓励/提问，1 句"
+}`;
+
+  const content=await callAI([
+    {role:"system",content:"你是用户的私人成长教练。洞察敏锐、语言精准、温暖不油腻。严格 JSON 输出。"},
+    {role:"user",content:prompt}
+  ],{temperature:0.7,max_tokens:1800});
+  
+  let jsonStr=content.trim();
+  const m=jsonStr.match(/```(?:json)?\s*([\s\S]+?)\s*```/);
+  if(m)jsonStr=m[1];
+  const start=jsonStr.indexOf("{"),end=jsonStr.lastIndexOf("}");
+  if(start>=0&&end>start)jsonStr=jsonStr.slice(start,end+1);
+  try{
+    const insight=JSON.parse(jsonStr);
+    return{...insight,id:"weekly_"+Date.now(),type:"weekly",date:today,createdAt:new Date().toISOString()};
+  }catch(e){console.error("[aiWeeklyInsight]",content);throw new Error("洞察生成失败");}
+}
+
 async function aiPlanToday(tasks,catOf,projOf,today){
   // 把任务分成 3 组：逾期 / 今日 / 未来 7 天
   const overdueT=tasks.filter(t=>!t.done&&t.due&&t.due<today);
@@ -1138,6 +1467,14 @@ function parseNL(text,today){
 function curMin(){const d=new Date();return d.getHours()*60+d.getMinutes();}
 function getGreeting(){const h=new Date().getHours();return GREETINGS.find(g=>h>=g.range[0]&&h<g.range[1])||GREETINGS[0];}
 function weekdayCN(date){const d=new Date(date);return["周日","周一","周二","周三","周四","周五","周六"][d.getDay()];}
+function getWeekKey(date){
+  // 返回该日期所在周的周一日期作为 key（如 "2026-04-27"）
+  const d=new Date(date);
+  const dow=(d.getDay()+6)%7; // 周一=0
+  const mon=new Date(d);
+  mon.setDate(d.getDate()-dow);
+  return dateStr(mon);
+}
 function weekdayEN(date){const d=new Date(date);return["SUN","MON","TUE","WED","THU","FRI","SAT"][d.getDay()];}
 function monthName(date){return new Date(date).toLocaleDateString("en-US",{month:"short"}).toUpperCase();}
 function isOverdue(task,nowToday,nowMins,projects){
@@ -1926,6 +2263,93 @@ function MainApp({user}){
     return()=>clearInterval(itv);
   },[loaded,tasks,history,journals,today]);
 
+  // ═══ 主动周度洞察 + 个人画像更新 ═══
+  const[weeklyInsight,setWeeklyInsight]=useState(null);
+  const[profileGenerating,setProfileGenerating]=useState(false);
+  useEffect(()=>{
+    if(!loaded)return;
+    const check=async()=>{
+      const meta=getAiMeta();
+      const dow=new Date(today).getDay(); // 周日=0, 周一=1
+      const isMonday=dow===1;
+      
+      // 周度洞察：周一首次打开（同一周内只推一次）
+      const thisWeekKey=getWeekKey(today);
+      if(isMonday&&meta.lastWeeklyAt!==thisWeekKey){
+        const now=new Date();
+        // 只在 6:00 之后推送
+        if(now.getHours()>=6){
+          try{
+            // 顺便先把画像更新一次（如果太久没更新）
+            let profile=getProfile();
+            const lastProfileDays=meta.lastProfileAt?Math.floor((Date.now()-new Date(meta.lastProfileAt).getTime())/86400000):999;
+            if(lastProfileDays>=7){
+              try{
+                profile=await aiAnalyzeProfile({tasks,history,journals,catOf,projOf,today,existingProfile:profile});
+                setProfile(profile);
+                setAiMeta({...meta,lastProfileAt:new Date().toISOString()});
+              }catch(e){console.warn("[Profile update failed]",e);}
+            }
+            // 生成洞察
+            const insight=await aiWeeklyInsight({tasks,history,journals,catOf,projOf,today,profile});
+            setWeeklyInsight(insight);
+            const all=getInsights();
+            setInsights([...all,insight]);
+            setAiMeta({...getAiMeta(),lastWeeklyAt:thisWeekKey});
+          }catch(e){console.error("[Weekly Insight]",e);}
+        }
+      }
+    };
+    check();
+    const itv=setInterval(check,30*60*1000); // 每 30 分钟检查
+    return()=>clearInterval(itv);
+  },[loaded,tasks,history,journals,today]);
+
+  // 手动触发：现在就生成洞察
+  const requestWeeklyInsight=async()=>{
+    if(profileGenerating)return;
+    setProfileGenerating(true);
+    showToast("正在分析你的本周轨迹...","info");
+    try{
+      let profile=getProfile();
+      const meta=getAiMeta();
+      const lastProfileDays=meta.lastProfileAt?Math.floor((Date.now()-new Date(meta.lastProfileAt).getTime())/86400000):999;
+      if(lastProfileDays>=3){
+        try{
+          profile=await aiAnalyzeProfile({tasks,history,journals,catOf,projOf,today,existingProfile:profile});
+          setProfile(profile);
+          setAiMeta({...meta,lastProfileAt:new Date().toISOString()});
+        }catch(e){console.warn(e);}
+      }
+      const insight=await aiWeeklyInsight({tasks,history,journals,catOf,projOf,today,profile});
+      setWeeklyInsight(insight);
+      const all=getInsights();
+      setInsights([...all,insight]);
+      setAiMeta({...getAiMeta(),lastWeeklyAt:getWeekKey(today)});
+    }catch(e){
+      showToast("生成失败: "+(e.message||"请稍后重试"),"error");
+    }
+    setProfileGenerating(false);
+  };
+
+  // 手动更新画像
+  const requestProfileUpdate=async()=>{
+    if(profileGenerating)return;
+    setProfileGenerating(true);
+    showToast("正在分析你的 30 天轨迹...","info");
+    try{
+      const existing=getProfile();
+      const profile=await aiAnalyzeProfile({tasks,history,journals,catOf,projOf,today,existingProfile:existing});
+      setProfile(profile);
+      const meta=getAiMeta();
+      setAiMeta({...meta,lastProfileAt:new Date().toISOString()});
+      showToast("✨ 画像已更新","success");
+    }catch(e){
+      showToast("分析失败: "+(e.message||"请稍后重试"),"error");
+    }
+    setProfileGenerating(false);
+  };
+
   // ═══ CRUD ═══
   // 新任务自动取最大 sortKey + 1000，插到队首/队尾
   const nextSortKey=()=>{
@@ -2232,7 +2656,7 @@ function MainApp({user}){
 
       {/* DESKTOP */}
       <div className="desktop-layout desktop-only" style={{position:"relative",zIndex:3}}>
-        <SideNav th={th} view={view} setView={setView} projects={projects} catOf={catOf} tasks={tasks} today={today} setShowSettings={setShowSettings} setEditProjectId={setEditProjectId} setShowProjectForm={setShowProjectForm} setOpenProjectId={setOpenProjectId} displayName={displayName}/>
+        <SideNav th={th} view={view} setView={setView} projects={projects} catOf={catOf} tasks={tasks} today={today} setShowSettings={setShowSettings} setEditProjectId={setEditProjectId} setShowProjectForm={setShowProjectForm} setOpenProjectId={setOpenProjectId} displayName={displayName} hasInsight={getInsights().length>0} onShowLatestInsight={()=>{const all=getInsights();if(all.length>0)setWeeklyInsight(all[all.length-1]);}}/>
         <div style={{display:"flex",flexDirection:"column",minHeight:"100vh"}}>
           <TopBar th={th} view={view} setView={setView} setShowCmdK={setShowCmdK} setShowTaskForm={setShowTaskForm} syncStatus={syncStatus} displayName={displayName} setShowSettings={setShowSettings} setShowSearch={setShowSearch}/>
           <main style={{flex:1,overflowY:"auto",padding:"24px 32px 28px",minWidth:0,position:"relative"}} className="slim-scroll">
@@ -2271,7 +2695,8 @@ function MainApp({user}){
       {showJournalModal&&<JournalModal th={th} today={today} todayJournal={todayJournal} saveJournal={saveJournal} onClose={dismissJournalModal}/>}
       {showAiPlanModal&&aiPlan&&<AiPlanModal th={th} plan={aiPlan} tasks={tasks} catOf={catOf} today={today} onApply={applyAiPlan} onClose={()=>{setShowAiPlanModal(false);setAiPlan(null);}}/>}
       {autoReport&&<AiReportModal th={th} report={autoReport} onClose={()=>setAutoReport(null)}/>}
-      {showSettings&&<Settings th={th} themeId={themeId} setThemeId={setThemeId} cats={cats} setCats={setCats} projects={projects} setProjects={setProjects} tasks={tasks} history={history} setTasks={setTasks} setHistory={setHistory} trash={trash} restoreTask={restoreTask} purgeTask={purgeTask} emptyTrash={emptyTrash} tags={tags} addTag={addTag} updateTag={updateTag} removeTag={removeTag} onClose={()=>setShowSettings(false)} user={user} onSignOut={signOut} notifPerm={notifPerm} askNotif={askNotif} installPWA={installPWA} installState={installState} today={today} showToast={showToast} catOf={catOf}/>}
+      {weeklyInsight&&<WeeklyInsightModal th={th} insight={weeklyInsight} profile={getProfile()} onClose={()=>setWeeklyInsight(null)}/>}
+      {showSettings&&<Settings th={th} themeId={themeId} setThemeId={setThemeId} cats={cats} setCats={setCats} projects={projects} setProjects={setProjects} tasks={tasks} history={history} setTasks={setTasks} setHistory={setHistory} trash={trash} restoreTask={restoreTask} purgeTask={purgeTask} emptyTrash={emptyTrash} tags={tags} addTag={addTag} updateTag={updateTag} removeTag={removeTag} onClose={()=>setShowSettings(false)} user={user} onSignOut={signOut} notifPerm={notifPerm} askNotif={askNotif} installPWA={installPWA} installState={installState} today={today} showToast={showToast} catOf={catOf} requestProfileUpdate={requestProfileUpdate} requestWeeklyInsight={requestWeeklyInsight} profileGenerating={profileGenerating}/>}
     </div>
   );
 }
@@ -2294,7 +2719,7 @@ function ViewRouter(p){
 }
 
 // ═══ SIDE NAV (desktop) ═══
-function SideNav({th,view,setView,projects,catOf,tasks,today,setShowSettings,setEditProjectId,setShowProjectForm,setOpenProjectId,displayName}){
+function SideNav({th,view,setView,projects,catOf,tasks,today,setShowSettings,setEditProjectId,setShowProjectForm,setOpenProjectId,displayName,onShowLatestInsight,hasInsight}){
   const items=[
     {id:"today",t:"今日",ic:"target"},
     {id:"tomorrow",t:"明日",ic:"arrowRight"},
@@ -2318,6 +2743,18 @@ function SideNav({th,view,setView,projects,catOf,tasks,today,setShowSettings,set
         </div>
         <span className="display" style={{fontSize:17,color:th.ink0,letterSpacing:"-0.02em"}}>Timelinek</span>
       </div>
+
+      {/* AI 洞察入口 */}
+      {hasInsight&&(
+        <button onClick={onShowLatestInsight} className="hover-lift" style={{margin:"0 0 10px",padding:"10px 12px",borderRadius:11,background:`linear-gradient(135deg,${th.accent}20,${th.accent3}15)`,border:`1px dashed ${th.accent}50`,display:"flex",alignItems:"center",gap:9,cursor:"pointer",position:"relative"}}>
+          <span style={{fontSize:18,animation:"breathe 3.2s ease-in-out infinite"}}>☀️</span>
+          <div style={{flex:1,minWidth:0,textAlign:"left"}}>
+            <div style={{fontSize:11.5,fontWeight:600,color:th.ink0,letterSpacing:"0.02em"}}>本周观察</div>
+            <div style={{fontSize:10,color:th.ink2,marginTop:1}}>AI 看到的你</div>
+          </div>
+          <Ic n="chevRight" size={11} color={th.ink3}/>
+        </button>
+      )}
 
       <div className="mono" style={{fontSize:11,letterSpacing:"0.2em",color:th.ink3,padding:"8px 10px 6px",fontWeight:600}}>WORKSPACE</div>
       {items.map(it=>(
@@ -2690,6 +3127,79 @@ function UndoToast({th,undo,doUndo}){
 
 // ═══ AI PLAN MODAL · AI 排期建议弹窗 ═══
 // ═══ AI REPORT MODAL · 日报告/周报告统一弹窗 ═══
+// ═══ 主动洞察弹窗 · 每周一早上自动推送 ═══
+function WeeklyInsightModal({th,insight,profile,onClose,onApplySuggestion}){
+  if(!insight)return null;
+  return(
+    <div className="fadeIn modal-overlay" onClick={onClose}>
+      <div onClick={e=>e.stopPropagation()} className="slideUp glass-strong" style={{borderRadius:24,maxWidth:560,width:"100%",padding:0,position:"relative",overflow:"hidden",maxHeight:"92vh",display:"flex",flexDirection:"column"}}>
+        {/* 顶部光晕区 */}
+        <div style={{padding:"26px 28px 20px",background:`linear-gradient(135deg,${th.accent}22,${th.accent3}18,${th.accent2}10)`,position:"relative",overflow:"hidden",flexShrink:0}}>
+          <div style={{position:"absolute",top:-50,right:-30,width:180,height:180,borderRadius:"50%",background:`radial-gradient(circle,${th.accent3}50,transparent 70%)`,filter:"blur(20px)",pointerEvents:"none",animation:"orbDrift 14s ease-in-out infinite"}}/>
+          <div style={{position:"absolute",bottom:-40,left:-30,width:140,height:140,borderRadius:"50%",background:`radial-gradient(circle,${th.accent}40,transparent 70%)`,filter:"blur(18px)",pointerEvents:"none",animation:"orbDrift2 18s ease-in-out infinite"}}/>
+          <div style={{position:"relative",display:"flex",alignItems:"flex-start",gap:14}}>
+            <div style={{width:54,height:54,borderRadius:16,background:`linear-gradient(135deg,${th.accent},${th.accent3})`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:`0 6px 20px ${th.accent}60`,animation:"breathe 3.2s ease-in-out infinite"}}>
+              <span style={{fontSize:26}}>☀️</span>
+            </div>
+            <div style={{flex:1,minWidth:0}}>
+              <div className="mono" style={{fontSize:11,letterSpacing:"0.22em",color:th.accent2,marginBottom:6,fontWeight:600}}>WEEKLY · {insight.date}</div>
+              <h2 className="display" style={{fontSize:22,color:th.ink0,letterSpacing:"-0.02em",lineHeight:1.3,marginBottom:8}}>本周观察</h2>
+              <div style={{fontSize:14,color:th.ink1,lineHeight:1.65,fontWeight:500}}>{insight.greeting}</div>
+            </div>
+            <button onClick={onClose} style={{width:32,height:32,borderRadius:9,background:th.glass2,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Ic n="close" size={14} color={th.ink2}/></button>
+          </div>
+        </div>
+
+        {/* 内容区 */}
+        <div className="slim-scroll" style={{flex:1,overflowY:"auto",padding:"22px 28px"}}>
+          {/* 观察 */}
+          {Array.isArray(insight.observations)&&insight.observations.length>0&&(
+            <div style={{marginBottom:22}}>
+              <div className="mono" style={{fontSize:11,letterSpacing:"0.18em",color:th.ink3,marginBottom:10,fontWeight:600}}>📊 我注意到</div>
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {insight.observations.map((o,i)=>(
+                  <div key={i} className="glass" style={{padding:"12px 16px",borderRadius:12,fontSize:13.5,color:th.ink1,lineHeight:1.65,display:"flex",gap:12,alignItems:"flex-start",borderLeft:`2px solid ${th.accent2}80`}}>
+                    <span style={{fontSize:18,flexShrink:0,lineHeight:1}}>{o.icon||"💡"}</span>
+                    <span style={{flex:1}}>{o.text}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 建议 */}
+          {Array.isArray(insight.suggestions)&&insight.suggestions.length>0&&(
+            <div style={{marginBottom:18}}>
+              <div className="mono" style={{fontSize:11,letterSpacing:"0.18em",color:th.ink3,marginBottom:10,fontWeight:600}}>🎯 本周建议</div>
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {insight.suggestions.map((s,i)=>(
+                  <div key={i} style={{padding:"14px 16px",background:`linear-gradient(135deg,${th.accent}15,${th.accent3}10)`,borderRadius:12,border:`1px dashed ${th.accent}40`}}>
+                    <div style={{fontSize:13.5,fontWeight:600,color:th.ink0,marginBottom:5,letterSpacing:"0.01em"}}>→ {s.action}</div>
+                    {s.reason&&<div style={{fontSize:11.5,color:th.ink2,lineHeight:1.6}}>{s.reason}</div>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 结尾 */}
+          {insight.closing&&(
+            <div style={{padding:"14px 16px",background:th.glass1,borderRadius:11,fontSize:13,color:th.ink1,lineHeight:1.7,textAlign:"center",fontStyle:"italic"}}>
+              {insight.closing}
+            </div>
+          )}
+        </div>
+
+        {/* 底部 */}
+        <div style={{padding:"14px 26px",borderTop:`1px solid ${th.glassBorder}`,display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
+          <span className="mono" style={{fontSize:9,color:th.ink3,letterSpacing:"0.04em",flex:1}}>由 DeepSeek 生成 · 每周一早上自动推送</span>
+          <button onClick={onClose} style={{padding:"9px 22px",borderRadius:11,background:`linear-gradient(135deg,${th.accent},${th.accent3})`,color:"#fff",fontSize:13,fontWeight:600,boxShadow:`0 4px 14px ${th.accent}55`,letterSpacing:"0.01em"}}>开始这一周</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AiReportModal({th,report,onClose}){
   if(!report)return null;
   const{type,data}=report;
@@ -6083,7 +6593,189 @@ function ReviewSettings({th,showToast}){
   );
 }
 
-function Settings({th,themeId,setThemeId,cats,setCats,projects,setProjects,tasks,history,setTasks,setHistory,trash,restoreTask,purgeTask,emptyTrash,tags,addTag,updateTag,removeTag,onClose,user,onSignOut,notifPerm,askNotif,installPWA,installState,today,showToast,catOf}){
+// ═══ AI 个人画像设置 ═══
+function AiProfileSettings({th,showToast,requestProfileUpdate,requestWeeklyInsight,profileGenerating}){
+  const[profile,setProfileState]=useState(()=>getProfile());
+  const[insights,setInsightsState]=useState(()=>getInsights());
+  const[meta,setMetaState]=useState(()=>getAiMeta());
+  const[viewInsight,setViewInsight]=useState(null);
+  
+  // 监听 profile 变化（手动更新后立即刷新）
+  useEffect(()=>{
+    const itv=setInterval(()=>{
+      const p=getProfile();
+      const cur=JSON.stringify(p)!==JSON.stringify(profile);
+      if(cur)setProfileState(p);
+      const i=getInsights();
+      if(i.length!==insights.length)setInsightsState(i);
+      const m=getAiMeta();
+      if(JSON.stringify(m)!==JSON.stringify(meta))setMetaState(m);
+    },1000);
+    return()=>clearInterval(itv);
+  },[profile,insights,meta]);
+  
+  const lastProfileText=meta.lastProfileAt?(()=>{
+    const days=Math.floor((Date.now()-new Date(meta.lastProfileAt).getTime())/86400000);
+    return days===0?"今天":days+" 天前";
+  })():"未生成";
+  
+  const handleUpdate=async()=>{
+    await requestProfileUpdate();
+    setTimeout(()=>{setProfileState(getProfile());setMetaState(getAiMeta());},500);
+  };
+  const handleInsight=async()=>{
+    await requestWeeklyInsight();
+    setTimeout(()=>{setInsightsState(getInsights());setMetaState(getAiMeta());},500);
+  };
+  const handleClear=()=>{
+    if(!confirm("确定清除画像和所有洞察？这会重新从零分析。"))return;
+    try{localStorage.removeItem(PROFILE_KEY);localStorage.removeItem(INSIGHTS_KEY);localStorage.removeItem(META_KEY);}catch{}
+    setProfileState(null);setInsightsState([]);setMetaState({lastProfileAt:"",lastWeeklyAt:""});
+    showToast("已清除","success");
+  };
+  
+  return(
+    <div style={{padding:"4px 0"}}>
+      {/* 介绍卡 */}
+      <div className="glass" style={{padding:"16px 18px",borderRadius:14,marginBottom:14,background:`linear-gradient(135deg,${th.accent}10,${th.accent3}06)`,border:`1px dashed ${th.accent}40`}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+          <span style={{fontSize:22}}>🪞</span>
+          <div style={{fontSize:14,fontWeight:700,color:th.ink0,letterSpacing:"0.01em"}}>AI 个人画像</div>
+        </div>
+        <div style={{fontSize:11.5,color:th.ink2,lineHeight:1.7}}>
+          AI 从你过去 30 天的任务、习惯、日记、完成模式中分析"你是谁"。每周一自动更新。所有 AI 对话/排期/报告都会基于画像给出**针对你**的建议。
+        </div>
+      </div>
+
+      {/* 当前画像展示 */}
+      {profile?(
+        <div className="glass" style={{padding:18,borderRadius:14,marginBottom:14}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
+            <span style={{fontSize:11,padding:"3px 10px",borderRadius:8,background:th.accent+"22",color:th.accent2,fontWeight:600,letterSpacing:"0.04em"}}>v{profile.version||1}</span>
+            <span className="mono" style={{fontSize:10,color:th.ink3,letterSpacing:"0.04em"}}>更新于 {lastProfileText}</span>
+          </div>
+          
+          {profile.identity&&(
+            <div style={{marginBottom:14,padding:"12px 14px",background:`linear-gradient(135deg,${th.accent}15,${th.accent3}10)`,borderRadius:10,fontSize:13,color:th.ink0,lineHeight:1.65,fontStyle:"italic",borderLeft:`2px solid ${th.accent2}`}}>
+              "{profile.identity}"
+            </div>
+          )}
+
+          {profile.workPattern&&(profile.workPattern.peakTime||profile.workPattern.weekRhythm)&&(
+            <Section th={th} icon="⏰" title="工作节奏">
+              {profile.workPattern.peakTime&&<KV th={th} k="高效时段" v={profile.workPattern.peakTime}/>}
+              {profile.workPattern.lowTime&&<KV th={th} k="低能时段" v={profile.workPattern.lowTime}/>}
+              {profile.workPattern.weekRhythm&&<KV th={th} k="一周节奏" v={profile.workPattern.weekRhythm}/>}
+            </Section>
+          )}
+          
+          {Array.isArray(profile.strengths)&&profile.strengths.length>0&&(
+            <Section th={th} icon="💪" title="优势" color="#10d9a3">
+              {profile.strengths.map((s,i)=><Bullet key={i} th={th}>{s}</Bullet>)}
+            </Section>
+          )}
+          
+          {Array.isArray(profile.blockers)&&profile.blockers.length>0&&(
+            <Section th={th} icon="⚠️" title="阻碍" color="#f5a524">
+              {profile.blockers.map((s,i)=><Bullet key={i} th={th}>{s}</Bullet>)}
+            </Section>
+          )}
+          
+          {Array.isArray(profile.habits)&&profile.habits.length>0&&(
+            <Section th={th} icon="🌱" title="稳定习惯">
+              {profile.habits.map((s,i)=><Bullet key={i} th={th}>{s}</Bullet>)}
+            </Section>
+          )}
+          
+          {Array.isArray(profile.goals)&&profile.goals.length>0&&(
+            <Section th={th} icon="🎯" title="推断的目标">
+              {profile.goals.map((s,i)=><Bullet key={i} th={th}>{s}</Bullet>)}
+            </Section>
+          )}
+          
+          {Array.isArray(profile.preferences)&&profile.preferences.length>0&&(
+            <Section th={th} icon="💡" title="其他特征">
+              {profile.preferences.map((s,i)=><Bullet key={i} th={th}>{s}</Bullet>)}
+            </Section>
+          )}
+        </div>
+      ):(
+        <div style={{padding:"24px 18px",background:th.glass1,borderRadius:13,marginBottom:14,textAlign:"center",border:`1px dashed ${th.glassBorder}`}}>
+          <div style={{fontSize:32,marginBottom:10,opacity:.5}}>🌱</div>
+          <div style={{fontSize:13,color:th.ink1,fontWeight:500,marginBottom:5}}>还没有画像</div>
+          <div style={{fontSize:11,color:th.ink2,lineHeight:1.6}}>使用 7 天后再生成更准确，但现在也可以试试</div>
+        </div>
+      )}
+      
+      {/* 操作按钮 */}
+      <div style={{display:"flex",gap:8,marginBottom:14}}>
+        <button onClick={handleUpdate} disabled={profileGenerating} className="hover-lift" style={{flex:1,padding:"12px 14px",background:profileGenerating?th.glass2:`linear-gradient(135deg,${th.accent},${th.accent3})`,color:profileGenerating?th.ink3:"#fff",borderRadius:11,fontSize:12.5,fontWeight:600,letterSpacing:"0.02em",display:"flex",alignItems:"center",justifyContent:"center",gap:6,boxShadow:profileGenerating?"none":`0 4px 12px ${th.accent}50`}}>
+          {profileGenerating?<><span className="spin">○</span> 分析中</>:<><Ic n="zap" size={12} sw={2.2} color="#fff"/> {profile?"重新分析":"开始分析"}</>}
+        </button>
+        <button onClick={handleInsight} disabled={profileGenerating} className="hover-lift" style={{flex:1,padding:"12px 14px",background:th.glass2,color:th.ink1,borderRadius:11,fontSize:12.5,fontWeight:600,letterSpacing:"0.02em",border:`1px solid ${th.glassBorder}`}}>
+          ☀️ 现在生成洞察
+        </button>
+      </div>
+
+      {/* 历史洞察 */}
+      {insights.length>0&&(
+        <div style={{marginBottom:14}}>
+          <div className="mono" style={{fontSize:10,letterSpacing:"0.18em",color:th.ink3,marginBottom:8,fontWeight:600}}>过往洞察 · {insights.length} 条</div>
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {insights.slice().reverse().slice(0,5).map((ins,i)=>(
+              <button key={ins.id||i} onClick={()=>setViewInsight(ins)} className="glass hover-lift" style={{padding:"10px 14px",borderRadius:10,textAlign:"left",border:`1px solid ${th.glassBorder}`,display:"flex",alignItems:"center",gap:10}}>
+                <span style={{fontSize:16}}>☀️</span>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:12,color:th.ink0,fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ins.greeting||"周度洞察"}</div>
+                  <div className="mono" style={{fontSize:10,color:th.ink3,marginTop:2,letterSpacing:"0.04em"}}>{ins.date}</div>
+                </div>
+                <Ic n="chevRight" size={12} color={th.ink3}/>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 底部操作 */}
+      {profile&&(
+        <button onClick={handleClear} style={{width:"100%",padding:"10px 14px",background:"transparent",color:"#ff5d7a",borderRadius:9,fontSize:11,fontWeight:500,border:`1px solid #ff5d7a40`,letterSpacing:"0.02em"}}>清除画像和洞察</button>
+      )}
+      
+      {viewInsight&&<WeeklyInsightModal th={th} insight={viewInsight} profile={profile} onClose={()=>setViewInsight(null)}/>}
+    </div>
+  );
+}
+
+// 小组件：分组
+function Section({th,icon,title,color,children}){
+  return(
+    <div style={{marginBottom:14}}>
+      <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:7}}>
+        <span style={{fontSize:13}}>{icon}</span>
+        <span className="mono" style={{fontSize:10,color:color||th.ink3,letterSpacing:"0.16em",fontWeight:600,textTransform:"uppercase"}}>{title}</span>
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:5,paddingLeft:18}}>{children}</div>
+    </div>
+  );
+}
+function KV({th,k,v}){
+  return(
+    <div style={{display:"flex",fontSize:12,gap:8,lineHeight:1.6}}>
+      <span style={{color:th.ink3,minWidth:62}}>{k}</span>
+      <span style={{color:th.ink1,flex:1}}>{v}</span>
+    </div>
+  );
+}
+function Bullet({th,children}){
+  return(
+    <div style={{fontSize:12,color:th.ink1,lineHeight:1.7,display:"flex",gap:8}}>
+      <span style={{color:th.ink3}}>·</span>
+      <span style={{flex:1}}>{children}</span>
+    </div>
+  );
+}
+
+function Settings({th,themeId,setThemeId,cats,setCats,projects,setProjects,tasks,history,setTasks,setHistory,trash,restoreTask,purgeTask,emptyTrash,tags,addTag,updateTag,removeTag,onClose,user,onSignOut,notifPerm,askNotif,installPWA,installState,today,showToast,catOf,requestProfileUpdate,requestWeeklyInsight,profileGenerating}){
   const[tab,setTab]=useState("appearance");
   const exportJSON=()=>{const data={tasks,history,cats,projects,exportedAt:todayStr()};const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=`timelinek-${todayStr()}.json`;a.click();URL.revokeObjectURL(url);showToast("已导出","success");};
   const exportXLSX=()=>{
@@ -6124,7 +6816,7 @@ function Settings({th,themeId,setThemeId,cats,setCats,projects,setProjects,tasks
           <button onClick={onClose} style={{width:34,height:34,borderRadius:10,background:th.glass2,display:"flex",alignItems:"center",justifyContent:"center"}}><Ic n="close" size={14} color={th.ink2}/></button>
         </div>
         <div style={{padding:"10px 16px",display:"flex",gap:4,overflowX:"auto",borderBottom:`1px solid ${th.glassBorder}`}} className="slim-scroll">
-          {[["appearance","外观","palette"],["account","账户","user"],["categories","分类","layers"],["tags",`标签${tags&&tags.length?` · ${tags.length}`:""}`,"hash"],["sound","声音","bell"],["review","复盘","star"],["trash",`回收站${trash&&trash.length?` · ${trash.length}`:""}`,"trash"],["data","数据","download"],["about","关于","info"]].map(([k,l,ic])=>(
+          {[["appearance","外观","palette"],["account","账户","user"],["ai","AI 画像","zap"],["categories","分类","layers"],["tags",`标签${tags&&tags.length?` · ${tags.length}`:""}`,"hash"],["sound","声音","bell"],["review","复盘","star"],["trash",`回收站${trash&&trash.length?` · ${trash.length}`:""}`,"trash"],["data","数据","download"],["about","关于","info"]].map(([k,l,ic])=>(
             <button key={k} onClick={()=>setTab(k)} className={`view-tab ${tab===k?"active":""}`} style={{flexShrink:0}}>
               <Ic n={ic} size={11} color={tab===k?"#fff":th.ink2}/> {l}
             </button>
@@ -6244,6 +6936,7 @@ function Settings({th,themeId,setThemeId,cats,setCats,projects,setProjects,tasks
 
           {tab==="sound"&&<SoundSettings th={th} showToast={showToast} notifPerm={notifPerm} askNotif={askNotif}/>}
           {tab==="review"&&<ReviewSettings th={th} showToast={showToast}/>}
+          {tab==="ai"&&<AiProfileSettings th={th} showToast={showToast} requestProfileUpdate={requestProfileUpdate} requestWeeklyInsight={requestWeeklyInsight} profileGenerating={profileGenerating}/>}
 
           {tab==="trash"&&(
             <div>

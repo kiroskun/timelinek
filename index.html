@@ -254,14 +254,14 @@ const PROFILE_KEY="tlk_profile_v1";
 function getProfile(){
   try{const r=localStorage.getItem(PROFILE_KEY);return r?JSON.parse(r):null;}catch{return null;}
 }
-function setProfile(p){try{localStorage.setItem(PROFILE_KEY,JSON.stringify(p));}catch{}}
+function setProfile(p){try{localStorage.setItem(PROFILE_KEY,JSON.stringify(p));window.dispatchEvent(new Event("tlk_chat_changed"));}catch{}}
 
 // 历史洞察推送记录 [{id, type, date, content, dismissed, applied}]
 const INSIGHTS_KEY="tlk_insights_v1";
 function getInsights(){
   try{const r=localStorage.getItem(INSIGHTS_KEY);return r?JSON.parse(r):[];}catch{return[];}
 }
-function setInsights(arr){try{localStorage.setItem(INSIGHTS_KEY,JSON.stringify(arr.slice(-30)));}catch{}}
+function setInsights(arr){try{localStorage.setItem(INSIGHTS_KEY,JSON.stringify(arr.slice(-30)));window.dispatchEvent(new Event("tlk_chat_changed"));}catch{}}
 
 // 上次画像更新时间 + 上次洞察推送日期
 const META_KEY="tlk_ai_meta_v1";
@@ -1511,13 +1511,22 @@ const emptyTask={title:"",content:"",category:"work",priority:"中",due:"",timeS
 async function cloudLoad(userId){try{const{data,error}=await supabase.from("user_data").select("*").eq("user_id",userId).maybeSingle();if(error)throw error;return data;}catch(e){return null;}}
 async function cloudSave(userId,p){
   const base={user_id:userId,tasks:p.tasks||[],history:p.history||[],cats:p.cats||DEFAULT_CATEGORIES,trash:p.trash||[],tags:p.tags||[],journals:p.journals||[],theme_id:p.themeId||"aurora",updated_at:new Date().toISOString()};
+  // 完整字段：含 projects + AI 数据
+  const full={...base,projects:p.projects||[],chat_messages:p.chatMessages||[],ai_profile:p.aiProfile||null,ai_insights:p.aiInsights||[]};
   try{
-    const{error}=await supabase.from("user_data").upsert({...base,projects:p.projects||[]},{onConflict:"user_id"});
+    const{error}=await supabase.from("user_data").upsert(full,{onConflict:"user_id"});
     if(!error)return{ok:true,partial:false};
-    // 若表缺少 projects 列（老 schema），回退写入 base —— 但标记为部分同步，告知调用方 projects 只在本地
-    if(error.message&&/column|schema|projects/i.test(error.message)){
-      const{error:err2}=await supabase.from("user_data").upsert(base,{onConflict:"user_id"});
-      if(!err2)return{ok:true,partial:true,reason:"projects_col_missing"};
+    // 列不存在时逐级降级
+    const msg=(error.message||"").toLowerCase();
+    if(/chat_messages|ai_profile|ai_insights|column|schema/i.test(msg)){
+      // 去掉 AI 字段重试
+      const{error:err2}=await supabase.from("user_data").upsert({...base,projects:p.projects||[]},{onConflict:"user_id"});
+      if(!err2)return{ok:true,partial:true,reason:"ai_cols_missing"};
+      // projects 也不在
+      if(/projects/i.test((err2&&err2.message||"").toLowerCase())){
+        const{error:err3}=await supabase.from("user_data").upsert(base,{onConflict:"user_id"});
+        if(!err3)return{ok:true,partial:true,reason:"projects_col_missing"};
+      }
     }
     return{ok:false};
   }catch(e){return{ok:false};}
@@ -2124,6 +2133,16 @@ function MainApp({user}){
         setTags(Array.isArray(cloud.tags)?cloud.tags:[]);
         setJournals(Array.isArray(cloud.journals)?cloud.journals:[]);
         setThemeId(cloud.theme_id||"aurora");
+        // 同步 AI 数据到 localStorage（供 AssistantView / Profile 设置读取）
+        try{
+          if(Array.isArray(cloud.chat_messages)){
+            localStorage.setItem("tlk_chat_v1",JSON.stringify(cloud.chat_messages));
+            // 通知 AssistantView 重新读取
+            window.dispatchEvent(new Event("tlk_chat_synced"));
+          }
+          if(cloud.ai_profile&&typeof cloud.ai_profile==="object")localStorage.setItem(PROFILE_KEY,JSON.stringify(cloud.ai_profile));
+          if(Array.isArray(cloud.ai_insights))localStorage.setItem(INSIGHTS_KEY,JSON.stringify(cloud.ai_insights));
+        }catch{}
         setSyncStatus("synced");
       }else{
         // 云端没有该用户的记录（首次登录）→ 完全空，绝不用本地缓存（防止污染）
@@ -2135,6 +2154,8 @@ function MainApp({user}){
         setTags([]);
         setJournals([]);
         setThemeId("aurora");
+        // 清掉本地 AI 数据（首次登录账号不应继承上一个账号的）
+        try{localStorage.removeItem("tlk_chat_v1");localStorage.removeItem(PROFILE_KEY);localStorage.removeItem(INSIGHTS_KEY);}catch{}
         setSyncStatus("synced");
       }
       const ts=loadTimerState();
@@ -2152,9 +2173,23 @@ function MainApp({user}){
 
   const saveTimer=useRef(null);
   const partialSyncRef=useRef(false); // 云端缺 projects 列时为 true，阻止 poll 用云端数据覆盖本地 projects
+  // chat 数据本地保存的 tick — AssistantView 写入 tlk_chat_v1 后会触发
+  const[chatVersion,setChatVersion]=useState(0);
+  useEffect(()=>{
+    const h=()=>setChatVersion(v=>v+1);
+    window.addEventListener("tlk_chat_changed",h);
+    return()=>window.removeEventListener("tlk_chat_changed",h);
+  },[]);
   useEffect(()=>{
     if(!loaded)return;
-    const payload={tasks,history:snapshot(tasks,history,today),cats,projects,trash,tags,journals,themeId};
+    // 读 AI 三件套（chat / profile / insights）一起送上云
+    let chatMessages=[],aiProfile=null,aiInsights=[];
+    try{
+      const c=localStorage.getItem("tlk_chat_v1");if(c)chatMessages=JSON.parse(c)||[];
+      const p=localStorage.getItem(PROFILE_KEY);if(p)aiProfile=JSON.parse(p);
+      const i=localStorage.getItem(INSIGHTS_KEY);if(i)aiInsights=JSON.parse(i)||[];
+    }catch{}
+    const payload={tasks,history:snapshot(tasks,history,today),cats,projects,trash,tags,journals,themeId,chatMessages,aiProfile,aiInsights};
     localCacheSave(user.id,payload);
     if(saveTimer.current)clearTimeout(saveTimer.current);
     saveTimer.current=setTimeout(async()=>{
@@ -2165,7 +2200,7 @@ function MainApp({user}){
       saveTimer.current=null;
     },800);
     return()=>{if(saveTimer.current){clearTimeout(saveTimer.current);saveTimer.current=null;}};
-  },[tasks,cats,projects,trash,tags,journals,themeId,loaded,today,history,snapshot,user.id]);
+  },[tasks,cats,projects,trash,tags,journals,themeId,loaded,today,history,snapshot,user.id,chatVersion]);
 
   useEffect(()=>{
     if(!loaded)return;
@@ -2189,6 +2224,15 @@ function MainApp({user}){
           if(Array.isArray(cloud.tags))setTags(cloud.tags);
           if(Array.isArray(cloud.journals))setJournals(cloud.journals);
           setThemeId(cloud.theme_id||"aurora");
+          // AI 数据也同步：写入 localStorage + 通知 AssistantView 重读
+          try{
+            if(Array.isArray(cloud.chat_messages)){
+              localStorage.setItem("tlk_chat_v1",JSON.stringify(cloud.chat_messages));
+              window.dispatchEvent(new Event("tlk_chat_synced"));
+            }
+            if(cloud.ai_profile&&typeof cloud.ai_profile==="object")localStorage.setItem(PROFILE_KEY,JSON.stringify(cloud.ai_profile));
+            if(Array.isArray(cloud.ai_insights))localStorage.setItem(INSIGHTS_KEY,JSON.stringify(cloud.ai_insights));
+          }catch{}
           showToast("已同步其他设备的更新","info");
         }
       }catch{}
@@ -3420,9 +3464,32 @@ function AssistantView({th,tasks,setTasks,projects,cats,catOf,tags,journals,toda
   const fileInputRef=useRef(null);
   const scrollRef=useRef(null);
   
-  // 持久化对话
+  // 持久化对话 + 通知 MainApp 触发云同步
   useEffect(()=>{
-    try{localStorage.setItem("tlk_chat_v1",JSON.stringify(messages.slice(-30)));}catch{}
+    try{
+      localStorage.setItem("tlk_chat_v1",JSON.stringify(messages.slice(-30)));
+      window.dispatchEvent(new Event("tlk_chat_changed"));
+    }catch{}
+  },[messages]);
+  
+  // 监听云端推过来的最新对话（来自其他设备的更新）
+  useEffect(()=>{
+    const onSynced=()=>{
+      try{
+        const r=localStorage.getItem("tlk_chat_v1");
+        if(r){
+          const cloud=JSON.parse(r);
+          // 仅当云端比本地新（消息数更多或最后时间戳更晚）时才覆盖，避免循环
+          const localLast=messages.length>0?messages[messages.length-1]?.ts||0:0;
+          const cloudLast=cloud.length>0?cloud[cloud.length-1]?.ts||0:0;
+          if(cloud.length!==messages.length||cloudLast>localLast){
+            setMessages(cloud);
+          }
+        }
+      }catch{}
+    };
+    window.addEventListener("tlk_chat_synced",onSynced);
+    return()=>window.removeEventListener("tlk_chat_synced",onSynced);
   },[messages]);
   
   // 自动滚到底部

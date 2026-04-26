@@ -269,6 +269,90 @@ function getAiMeta(){
   try{const r=localStorage.getItem(META_KEY);return r?JSON.parse(r):{lastProfileAt:"",lastWeeklyAt:""};}catch{return{lastProfileAt:"",lastWeeklyAt:""};}
 }
 function setAiMeta(m){try{localStorage.setItem(META_KEY,JSON.stringify(m));}catch{}}
+
+// ═══ AI 收件箱 ═══
+// 4 个 AI 发件人 — 每个有头像、签名、人格
+const INBOX_SENDERS={
+  coach:{
+    name:"Coach",
+    nameZh:"教练",
+    emoji:"📊",
+    gradient:"linear-gradient(135deg,#8b5cf6,#ec4899)",
+    color:"#8b5cf6",
+    title:"成长教练",
+    signature:"—— 你的私人成长教练",
+    bio:"洞察你的模式，陪你走得更远",
+  },
+  reporter:{
+    name:"Reporter",
+    nameZh:"复盘官",
+    emoji:"🪞",
+    gradient:"linear-gradient(135deg,#3b82f6,#06b6d4)",
+    color:"#3b82f6",
+    title:"每日复盘官",
+    signature:"—— 你的每日复盘官",
+    bio:"忠实记录每一天的轨迹",
+  },
+  strategist:{
+    name:"Strategist",
+    nameZh:"策略师",
+    emoji:"🎯",
+    gradient:"linear-gradient(135deg,#f59e0b,#ef4444)",
+    color:"#f59e0b",
+    title:"策略顾问",
+    signature:"—— 你的策略师",
+    bio:"帮你做更明智的决策",
+  },
+  mentor:{
+    name:"Mentor",
+    nameZh:"导师",
+    emoji:"💡",
+    gradient:"linear-gradient(135deg,#10b981,#84cc16)",
+    color:"#10b981",
+    title:"思考导师",
+    signature:"—— 你的思考导师",
+    bio:"在你卡住时来谈一谈",
+  },
+};
+const senderInfo=(id)=>INBOX_SENDERS[id]||INBOX_SENDERS.coach;
+
+// 收件箱消息 [{id,from,type,subject,preview,content,rawData,tags,starred,read,archived,createdAt}]
+const INBOX_KEY="tlk_inbox_v1";
+function getInbox(){
+  try{const r=localStorage.getItem(INBOX_KEY);return r?JSON.parse(r):[];}catch{return[];}
+}
+function setInbox(arr){
+  try{
+    // 最多保留 200 条
+    localStorage.setItem(INBOX_KEY,JSON.stringify(arr.slice(-200)));
+    window.dispatchEvent(new Event("tlk_chat_changed"));
+    window.dispatchEvent(new Event("tlk_inbox_updated"));
+  }catch{}
+}
+// 添加一条新邮件到收件箱（生成 id + 默认值）
+function addToInbox(msg){
+  const all=getInbox();
+  const newMsg={
+    id:"msg_"+Date.now()+"_"+Math.floor(Math.random()*10000),
+    from:msg.from||"coach",
+    type:msg.type||"general",
+    subject:msg.subject||"未命名",
+    preview:(msg.preview||"").slice(0,140),
+    content:msg.content||"",
+    rawData:msg.rawData||null,
+    tags:Array.isArray(msg.tags)?msg.tags:[],
+    starred:false,
+    read:false,
+    archived:false,
+    createdAt:msg.createdAt||new Date().toISOString(),
+  };
+  setInbox([...all,newMsg]);
+  return newMsg;
+}
+// 未读数
+function getUnreadCount(){
+  return getInbox().filter(m=>!m.read&&!m.archived).length;
+}
 let _audioCtx=null;
 function getAudioCtx(){
   if(_audioCtx)return _audioCtx;
@@ -1512,13 +1596,13 @@ async function cloudLoad(userId){try{const{data,error}=await supabase.from("user
 async function cloudSave(userId,p){
   const base={user_id:userId,tasks:p.tasks||[],history:p.history||[],cats:p.cats||DEFAULT_CATEGORIES,trash:p.trash||[],tags:p.tags||[],journals:p.journals||[],theme_id:p.themeId||"aurora",updated_at:new Date().toISOString()};
   // 完整字段：含 projects + AI 数据
-  const full={...base,projects:p.projects||[],chat_messages:p.chatMessages||[],ai_profile:p.aiProfile||null,ai_insights:p.aiInsights||[]};
+  const full={...base,projects:p.projects||[],chat_messages:p.chatMessages||[],ai_profile:p.aiProfile||null,ai_insights:p.aiInsights||[],inbox_messages:p.inboxMessages||[]};
   try{
     const{error}=await supabase.from("user_data").upsert(full,{onConflict:"user_id"});
     if(!error)return{ok:true,partial:false};
     // 列不存在时逐级降级
     const msg=(error.message||"").toLowerCase();
-    if(/chat_messages|ai_profile|ai_insights|column|schema/i.test(msg)){
+    if(/chat_messages|ai_profile|ai_insights|inbox_messages|column|schema/i.test(msg)){
       // 去掉 AI 字段重试
       const{error:err2}=await supabase.from("user_data").upsert({...base,projects:p.projects||[]},{onConflict:"user_id"});
       if(!err2)return{ok:true,partial:true,reason:"ai_cols_missing"};
@@ -1635,6 +1719,11 @@ const IC_PATHS={
   bot:<g><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></g>,
   zap:<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>,
   fileText:<g><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></g>,
+  mail:<g><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22 6 12 13 2 6"/></g>,
+  starFilled:<polygon fill="currentColor" stroke="currentColor" points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26"/>,
+  archive:<g><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></g>,
+  inbox:<g><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z"/></g>,
+  filter:<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>,
 };
 function Ic({n,size=16,color="currentColor",sw=1.6}){return<svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}>{IC_PATHS[n]||null}</svg>;}
 
@@ -1923,6 +2012,16 @@ function MainApp({user}){
       const result=await aiPlanToday(undone,catOf,projOf,today);
       setAiPlan(result);
       setShowAiPlanModal(true);
+      // 归档
+      addToInbox({
+        from:"strategist",
+        type:"schedule_plan",
+        subject:`今日排期建议 · ${result.stats?.today||0} 项任务`,
+        preview:result.summary?String(result.summary).slice(0,120):"",
+        content:result,
+        rawData:result,
+        tags:["plan","strategy"],
+      });
     }catch(err){
       showToast("AI 排期失败: "+(err.message||"未知错误"),"error");
     }
@@ -2142,6 +2241,7 @@ function MainApp({user}){
           }
           if(cloud.ai_profile&&typeof cloud.ai_profile==="object")localStorage.setItem(PROFILE_KEY,JSON.stringify(cloud.ai_profile));
           if(Array.isArray(cloud.ai_insights))localStorage.setItem(INSIGHTS_KEY,JSON.stringify(cloud.ai_insights));
+            if(Array.isArray(cloud.inbox_messages)){localStorage.setItem(INBOX_KEY,JSON.stringify(cloud.inbox_messages));window.dispatchEvent(new Event("tlk_inbox_updated"));}
         }catch{}
         setSyncStatus("synced");
       }else{
@@ -2155,7 +2255,7 @@ function MainApp({user}){
         setJournals([]);
         setThemeId("aurora");
         // 清掉本地 AI 数据（首次登录账号不应继承上一个账号的）
-        try{localStorage.removeItem("tlk_chat_v1");localStorage.removeItem(PROFILE_KEY);localStorage.removeItem(INSIGHTS_KEY);}catch{}
+        try{localStorage.removeItem("tlk_chat_v1");localStorage.removeItem(PROFILE_KEY);localStorage.removeItem(INSIGHTS_KEY);localStorage.removeItem(INBOX_KEY);}catch{}
         setSyncStatus("synced");
       }
       const ts=loadTimerState();
@@ -2175,21 +2275,39 @@ function MainApp({user}){
   const partialSyncRef=useRef(false); // 云端缺 projects 列时为 true，阻止 poll 用云端数据覆盖本地 projects
   // chat 数据本地保存的 tick — AssistantView 写入 tlk_chat_v1 后会触发
   const[chatVersion,setChatVersion]=useState(0);
+  const[inboxVersion,setInboxVersion]=useState(0);
   useEffect(()=>{
     const h=()=>setChatVersion(v=>v+1);
+    const ih=()=>setInboxVersion(v=>v+1);
     window.addEventListener("tlk_chat_changed",h);
-    return()=>window.removeEventListener("tlk_chat_changed",h);
+    window.addEventListener("tlk_inbox_updated",ih);
+    return()=>{
+      window.removeEventListener("tlk_chat_changed",h);
+      window.removeEventListener("tlk_inbox_updated",ih);
+    };
   },[]);
+  // 派生：未读邮件数（响应式）
+  const unreadInboxCount=useMemo(()=>{
+    try{return getInbox().filter(m=>!m.read&&!m.archived).length;}catch{return 0;}
+  },[inboxVersion]);
+  // 最新一条未读邮件（用于首页强提醒）
+  const latestUnread=useMemo(()=>{
+    try{
+      const all=getInbox().filter(m=>!m.read&&!m.archived);
+      return all.length>0?all[all.length-1]:null;
+    }catch{return null;}
+  },[inboxVersion]);
   useEffect(()=>{
     if(!loaded)return;
-    // 读 AI 三件套（chat / profile / insights）一起送上云
-    let chatMessages=[],aiProfile=null,aiInsights=[];
+    // 读 AI 数据（chat / profile / insights / inbox）一起送上云
+    let chatMessages=[],aiProfile=null,aiInsights=[],inboxMessages=[];
     try{
       const c=localStorage.getItem("tlk_chat_v1");if(c)chatMessages=JSON.parse(c)||[];
       const p=localStorage.getItem(PROFILE_KEY);if(p)aiProfile=JSON.parse(p);
       const i=localStorage.getItem(INSIGHTS_KEY);if(i)aiInsights=JSON.parse(i)||[];
+      const ib=localStorage.getItem(INBOX_KEY);if(ib)inboxMessages=JSON.parse(ib)||[];
     }catch{}
-    const payload={tasks,history:snapshot(tasks,history,today),cats,projects,trash,tags,journals,themeId,chatMessages,aiProfile,aiInsights};
+    const payload={tasks,history:snapshot(tasks,history,today),cats,projects,trash,tags,journals,themeId,chatMessages,aiProfile,aiInsights,inboxMessages};
     localCacheSave(user.id,payload);
     if(saveTimer.current)clearTimeout(saveTimer.current);
     saveTimer.current=setTimeout(async()=>{
@@ -2232,6 +2350,7 @@ function MainApp({user}){
             }
             if(cloud.ai_profile&&typeof cloud.ai_profile==="object")localStorage.setItem(PROFILE_KEY,JSON.stringify(cloud.ai_profile));
             if(Array.isArray(cloud.ai_insights))localStorage.setItem(INSIGHTS_KEY,JSON.stringify(cloud.ai_insights));
+            if(Array.isArray(cloud.inbox_messages)){localStorage.setItem(INBOX_KEY,JSON.stringify(cloud.inbox_messages));window.dispatchEvent(new Event("tlk_inbox_updated"));}
           }catch{}
           showToast("已同步其他设备的更新","info");
         }
@@ -2299,6 +2418,16 @@ function MainApp({user}){
           const data=await aiDailyReport({date:today,tasks,history,catOf,projOf,journals});
           setAutoReport({type:"daily",data,date:today});
           setReviewConfig({...cfg,lastDailyAt:today});
+          // 归档
+          addToInbox({
+            from:"reporter",
+            type:"daily_review",
+            subject:`今日复盘 · ${data.title||today}`,
+            preview:data.review?String(data.review).slice(0,120):"",
+            content:data,
+            rawData:{type:"daily",data,date:today},
+            tags:["daily","review"],
+          });
         }catch(e){console.error("[Auto Daily Report]",e);}
       }
     };
@@ -2340,6 +2469,16 @@ function MainApp({user}){
             const all=getInsights();
             setInsights([...all,insight]);
             setAiMeta({...getAiMeta(),lastWeeklyAt:thisWeekKey});
+            // 归档到收件箱
+            addToInbox({
+              from:"coach",
+              type:"weekly_insight",
+              subject:`本周观察 · ${insight.greeting||"WEEK "+(Math.ceil((new Date(today).getDate()+new Date(new Date(today).getFullYear(),0,1).getDay())/7))}`,
+              preview:Array.isArray(insight.observations)&&insight.observations.length>0?insight.observations[0].text:insight.greeting||"",
+              content:insight,
+              rawData:insight,
+              tags:["weekly","insight"],
+            });
           }catch(e){console.error("[Weekly Insight]",e);}
         }
       }
@@ -2370,6 +2509,16 @@ function MainApp({user}){
       const all=getInsights();
       setInsights([...all,insight]);
       setAiMeta({...getAiMeta(),lastWeeklyAt:getWeekKey(today)});
+      // 归档
+      addToInbox({
+        from:"coach",
+        type:"weekly_insight",
+        subject:`本周观察 · ${today}`,
+        preview:Array.isArray(insight.observations)&&insight.observations.length>0?insight.observations[0].text:insight.greeting||"",
+        content:insight,
+        rawData:insight,
+        tags:["weekly","insight"],
+      });
     }catch(e){
       showToast("生成失败: "+(e.message||"请稍后重试"),"error");
     }
@@ -2388,6 +2537,16 @@ function MainApp({user}){
       const meta=getAiMeta();
       setAiMeta({...meta,lastProfileAt:new Date().toISOString()});
       showToast("✨ 画像已更新","success");
+      // 归档
+      addToInbox({
+        from:"mentor",
+        type:"profile_update",
+        subject:profile.identity?`我重新认识了你 · ${profile.identity.slice(0,20)}`:"我重新认识了你",
+        preview:profile.identity||"画像已更新，可在「设置 → AI 画像」查看",
+        content:profile,
+        rawData:profile,
+        tags:["profile","mentor"],
+      });
     }catch(e){
       showToast("分析失败: "+(e.message||"请稍后重试"),"error");
     }
@@ -2700,11 +2859,11 @@ function MainApp({user}){
 
       {/* DESKTOP */}
       <div className="desktop-layout desktop-only" style={{position:"relative",zIndex:3}}>
-        <SideNav th={th} view={view} setView={setView} projects={projects} catOf={catOf} tasks={tasks} today={today} setShowSettings={setShowSettings} setEditProjectId={setEditProjectId} setShowProjectForm={setShowProjectForm} setOpenProjectId={setOpenProjectId} displayName={displayName} hasInsight={getInsights().length>0} onShowLatestInsight={()=>{const all=getInsights();if(all.length>0)setWeeklyInsight(all[all.length-1]);}}/>
+        <SideNav th={th} view={view} setView={setView} projects={projects} catOf={catOf} tasks={tasks} today={today} setShowSettings={setShowSettings} setEditProjectId={setEditProjectId} setShowProjectForm={setShowProjectForm} setOpenProjectId={setOpenProjectId} displayName={displayName} hasInsight={getInsights().length>0} onShowLatestInsight={()=>{const all=getInsights();if(all.length>0)setWeeklyInsight(all[all.length-1]);}} unreadInboxCount={unreadInboxCount}/>
         <div style={{display:"flex",flexDirection:"column",minHeight:"100vh"}}>
           <TopBar th={th} view={view} setView={setView} setShowCmdK={setShowCmdK} setShowTaskForm={setShowTaskForm} syncStatus={syncStatus} displayName={displayName} setShowSettings={setShowSettings} setShowSearch={setShowSearch}/>
           <main style={{flex:1,overflowY:"auto",padding:"24px 32px 28px",minWidth:0,position:"relative"}} className="slim-scroll">
-            {view!=="activity"&&view!=="kanban"&&view!=="projects"&&view!=="month"&&view!=="assistant"&&<HeroHeader th={th} displayName={displayName} greeting={greeting} dateNum={dateNum} today={today} doneAll={doneAll} totalAll={totalAll} overdueCount={overdueCount} runningTask={runningTask} view={view} projects={projects}/>}
+            {view!=="activity"&&view!=="kanban"&&view!=="projects"&&view!=="month"&&view!=="assistant"&&view!=="inbox"&&<HeroHeader th={th} displayName={displayName} greeting={greeting} dateNum={dateNum} today={today} doneAll={doneAll} totalAll={totalAll} overdueCount={overdueCount} runningTask={runningTask} view={view} projects={projects} latestUnread={latestUnread} unreadInboxCount={unreadInboxCount} setView={setView}/>}
             {notifPerm==="default"&&tasks.some(t=>t.timeStart&&t.due===today)&&<NotifBanner th={th} askNotif={askNotif}/>}
             {showSearch&&<SearchBar th={th} searchQ={searchQ} setQ={setSearchQ} filtered={filtered} onClose={()=>{setShowSearch(false);setSearchQ("");}}/>}
             <ViewRouter {...vp}/>
@@ -2721,7 +2880,7 @@ function MainApp({user}){
         {showSearch&&<SearchBar th={th} searchQ={searchQ} setQ={setSearchQ} filtered={filtered} onClose={()=>{setShowSearch(false);setSearchQ("");}}/>}
         <MobileViewSwitcher th={th} view={view} setView={setView}/>
         <ViewRouter {...vp}/>
-        <MobileBottomBar th={th} view={view} setView={setView} setShowTaskForm={setShowTaskForm} startPomodoro={startPomodoro} setShowSettings={setShowSettings}/>
+        <MobileBottomBar th={th} view={view} setView={setView} setShowTaskForm={setShowTaskForm} startPomodoro={startPomodoro} setShowSettings={setShowSettings} unreadInboxCount={unreadInboxCount}/>
       </div>
 
       {/* OVERLAYS */}
@@ -2758,12 +2917,13 @@ function ViewRouter(p){
     case "journal":return<JournalView {...p}/>;
     case "review":return<ReviewView {...p}/>;
     case "assistant":return<AssistantView {...p}/>;
+    case "inbox":return<InboxView {...p}/>;
     default:return<TasksView {...p}/>;
   }
 }
 
 // ═══ SIDE NAV (desktop) ═══
-function SideNav({th,view,setView,projects,catOf,tasks,today,setShowSettings,setEditProjectId,setShowProjectForm,setOpenProjectId,displayName,onShowLatestInsight,hasInsight}){
+function SideNav({th,view,setView,projects,catOf,tasks,today,setShowSettings,setEditProjectId,setShowProjectForm,setOpenProjectId,displayName,onShowLatestInsight,hasInsight,unreadInboxCount}){
   const items=[
     {id:"today",t:"今日",ic:"target"},
     {id:"tomorrow",t:"明日",ic:"arrowRight"},
@@ -2772,6 +2932,7 @@ function SideNav({th,view,setView,projects,catOf,tasks,today,setShowSettings,set
     {id:"kanban",t:"看板",ic:"layers"},
     {id:"projects",t:"项目",ic:"folder"},
     {id:"assistant",t:"AI 助手",ic:"bot"},
+    {id:"inbox",t:"AI 收件箱",ic:"mail",badge:unreadInboxCount},
     {id:"activity",t:"活动流",ic:"list"},
     {id:"recent",t:"近期完成",ic:"check"},
     {id:"journal",t:"一句日记",ic:"book"},
@@ -2802,10 +2963,11 @@ function SideNav({th,view,setView,projects,catOf,tasks,today,setShowSettings,set
 
       <div className="mono" style={{fontSize:11,letterSpacing:"0.2em",color:th.ink3,padding:"8px 10px 6px",fontWeight:600}}>WORKSPACE</div>
       {items.map(it=>(
-        <button key={it.id} onClick={()=>setView(it.id)} className={`nav-item ${view===it.id?"active":""}`}>
-          <Ic n={it.ic} size={14} color={view===it.id?th.accent2:th.ink3}/>
-          <span style={{flex:1}}>{it.t}</span>
+        <button key={it.id} onClick={()=>setView(it.id)} className={`nav-item ${view===it.id?"active":""}`} style={it.id==="inbox"&&it.badge>0?{position:"relative"}:undefined}>
+          <Ic n={it.ic} size={14} color={view===it.id?th.accent2:(it.id==="inbox"&&it.badge>0?th.accent2:th.ink3)}/>
+          <span style={{flex:1,fontWeight:it.id==="inbox"&&it.badge>0?600:undefined,color:it.id==="inbox"&&it.badge>0&&view!==it.id?th.ink0:undefined}}>{it.t}</span>
           {it.id==="today"&&todayCount>0&&<span className="mono tnum" style={{fontSize:10,padding:"1px 7px",borderRadius:9,background:view===it.id?th.accent+"40":th.glass2,color:view===it.id?"#fff":th.ink3}}>{todayCount}</span>}
+          {it.id==="inbox"&&it.badge>0&&<span className="mono tnum" style={{fontSize:10,padding:"1px 7px",borderRadius:9,background:`linear-gradient(135deg,#ec4899,#f43f5e)`,color:"#fff",fontWeight:700,boxShadow:"0 0 10px rgba(236,72,153,0.5)",animation:"breathe 2.4s ease-in-out infinite"}}>{it.badge}</span>}
         </button>
       ))}
 
@@ -2867,7 +3029,7 @@ function TopBar({th,view,setView,setShowCmdK,setShowTaskForm,syncStatus,displayN
 }
 
 // ═══ HERO ═══
-function HeroHeader({th,displayName,greeting,dateNum,today,doneAll,totalAll,overdueCount,runningTask,view,projects}){
+function HeroHeader({th,displayName,greeting,dateNum,today,doneAll,totalAll,overdueCount,runningTask,view,projects,latestUnread,unreadInboxCount,setView}){
   const rate=totalAll?doneAll/totalAll:0;
   const isTomorrow=view==="tomorrow";
   const tomorrow=isTomorrow?addDays(today,1):today;
@@ -2895,6 +3057,69 @@ function HeroHeader({th,displayName,greeting,dateNum,today,doneAll,totalAll,over
             {overdueCount>0&&<MiniStat th={th} label="逾期" value={overdueCount} sub="项" c="#ff5d7a"/>}
           </div>
         )}
+      </div>
+      {/* AI 收件箱强提醒卡片 — 只在有未读且不在 inbox/tomorrow 时显示 */}
+      {latestUnread&&unreadInboxCount>0&&!isTomorrow&&view!=="inbox"&&(
+        <InboxNudgeCard th={th} msg={latestUnread} unread={unreadInboxCount} setView={setView}/>
+      )}
+    </div>
+  );
+}
+
+// 首页 AI 收件箱强提醒（点击进入收件箱）
+function InboxNudgeCard({th,msg,unread,setView}){
+  const sender=senderInfo(msg.from);
+  const dt=new Date(msg.createdAt);
+  const ago=(()=>{
+    const m=Math.floor((Date.now()-dt.getTime())/60000);
+    if(m<1)return"刚刚";
+    if(m<60)return m+" 分钟前";
+    const h=Math.floor(m/60);
+    if(h<24)return h+" 小时前";
+    const d=Math.floor(h/24);
+    return d+" 天前";
+  })();
+  return(
+    <div onClick={()=>setView&&setView("inbox")} className="hover-lift" style={{
+      marginTop:18,
+      padding:"16px 20px",
+      borderRadius:16,
+      background:`linear-gradient(135deg,${sender.color}18,${sender.color}06,${th.accent3}10)`,
+      border:`1px solid ${sender.color}40`,
+      cursor:"pointer",
+      position:"relative",
+      overflow:"hidden",
+      boxShadow:`0 4px 18px ${sender.color}25,0 1px 3px rgba(0,0,0,0.06)`,
+      animation:"slideUp 0.4s ease-out",
+    }}>
+      {/* 装饰光晕 */}
+      <div style={{position:"absolute",top:-30,right:-20,width:140,height:140,borderRadius:"50%",background:`radial-gradient(circle,${sender.color}40,transparent 70%)`,filter:"blur(18px)",pointerEvents:"none",animation:"orbDrift 14s ease-in-out infinite"}}/>
+      <div style={{position:"relative",display:"flex",alignItems:"center",gap:14}}>
+        {/* 头像 */}
+        <div style={{width:46,height:46,borderRadius:13,background:sender.gradient,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:`0 4px 14px ${sender.color}50`,animation:"breathe 3s ease-in-out infinite",position:"relative"}}>
+          <span style={{fontSize:22}}>{sender.emoji}</span>
+          <span style={{position:"absolute",top:-3,right:-3,minWidth:18,height:18,padding:"0 5px",borderRadius:10,background:"linear-gradient(135deg,#ec4899,#f43f5e)",color:"#fff",fontSize:10,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 8px rgba(236,72,153,0.5)",letterSpacing:"0.02em"}}>{unread}</span>
+        </div>
+        {/* 内容 */}
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+            <span style={{fontSize:11.5,fontWeight:600,color:sender.color,letterSpacing:"0.01em"}}>{sender.nameZh}</span>
+            <span className="mono" style={{fontSize:9.5,color:th.ink3,letterSpacing:"0.05em"}}>· {ago}</span>
+            <span className="mono" style={{fontSize:9,padding:"1px 7px",borderRadius:6,background:sender.color+"22",color:sender.color,letterSpacing:"0.08em",fontWeight:700,textTransform:"uppercase",marginLeft:"auto"}}>NEW</span>
+          </div>
+          <div style={{fontSize:14,fontWeight:700,color:th.ink0,marginBottom:4,letterSpacing:"0.01em",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+            {msg.subject}
+          </div>
+          {msg.preview&&(
+            <div style={{fontSize:12,color:th.ink2,lineHeight:1.55,overflow:"hidden",textOverflow:"ellipsis",display:"-webkit-box",WebkitLineClamp:1,WebkitBoxOrient:"vertical"}}>
+              {msg.preview}
+            </div>
+          )}
+        </div>
+        {/* 箭头 */}
+        <div style={{flexShrink:0,opacity:.5}}>
+          <Ic n="chevRight" size={18} color={th.ink2}/>
+        </div>
       </div>
     </div>
   );
@@ -3093,12 +3318,16 @@ function MobileViewSwitcher({th,view,setView}){
 }
 
 // ═══ MOBILE BOTTOM BAR ═══
-function MobileBottomBar({th,view,setView,setShowTaskForm,startPomodoro,setShowSettings}){
-  const navItem=(k,label,icon,onClick)=>{
+function MobileBottomBar({th,view,setView,setShowTaskForm,startPomodoro,setShowSettings,unreadInboxCount}){
+  const navItem=(k,label,icon,onClick,badge)=>{
     const act=view===k;
     return(
-      <button key={k} onClick={onClick||(()=>setView(k))} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"8px 0",color:act?th.accent:th.ink3,fontSize:10,letterSpacing:"0.04em",fontWeight:act?600:400}}>
-        <Ic n={icon} size={20} color={act?th.accent:th.ink3}/>{label}
+      <button key={k} onClick={onClick||(()=>setView(k))} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"8px 0",color:act?th.accent:th.ink3,fontSize:10,letterSpacing:"0.04em",fontWeight:act?600:400,position:"relative"}}>
+        <div style={{position:"relative"}}>
+          <Ic n={icon} size={20} color={act?th.accent:th.ink3}/>
+          {badge>0&&<span style={{position:"absolute",top:-4,right:-8,minWidth:16,height:16,padding:"0 4px",borderRadius:8,background:"linear-gradient(135deg,#ec4899,#f43f5e)",color:"#fff",fontSize:9,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 6px rgba(236,72,153,0.5)",letterSpacing:"0.02em"}}>{badge>99?"99+":badge}</span>}
+        </div>
+        {label}
       </button>
     );
   };
@@ -3106,12 +3335,10 @@ function MobileBottomBar({th,view,setView,setShowTaskForm,startPomodoro,setShowS
     <div className="mobile-only" style={{position:"fixed",bottom:0,left:0,right:0,background:th.isDark?"rgba(13,11,26,0.88)":"rgba(255,255,255,0.88)",borderTop:`1px solid ${th.glassBorder}`,backdropFilter:"blur(20px) saturate(180%)",WebkitBackdropFilter:"blur(20px) saturate(180%)",zIndex:100,paddingBottom:"env(safe-area-inset-bottom)"}}>
       <div style={{display:"flex",alignItems:"center",height:60,position:"relative"}}>
         {navItem("today","主页","target")}
-        {navItem("projects","项目","folder")}
+        {navItem("inbox","收件箱","mail",null,unreadInboxCount)}
         <div style={{width:66}}/>
         {navItem("assistant","AI","bot")}
-        <button onClick={()=>setShowSettings(true)} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"8px 0",color:th.ink3,fontSize:10,letterSpacing:"0.04em"}}>
-          <Ic n="settings" size={20} color={th.ink3}/>设置
-        </button>
+        {navItem("projects","项目","folder")}
         {/* Floating add (center) */}
         <button onClick={()=>setShowTaskForm(true)} style={{position:"absolute",left:"50%",top:-24,transform:"translateX(-50%)",width:58,height:58,borderRadius:"50%",background:`linear-gradient(135deg,${th.accent},${th.accent3})`,boxShadow:`0 10px 28px ${th.accent}80,inset 0 2px 0 rgba(255,255,255,0.2)`,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",zIndex:2}}>
           <Ic n="plus" size={26} color="#fff" sw={2.5}/>
@@ -3451,6 +3678,611 @@ function AiPlanModal({th,plan,tasks,catOf,onApply,onClose,today}){
 }
 
 // ═══ AI ASSISTANT · 对话视图 ═══
+// ═══ AI INBOX · 收件箱视图 ═══
+function InboxView({th,today,showToast}){
+  const[messages,setMessages]=useState(()=>getInbox());
+  const[selectedId,setSelectedId]=useState(null);
+  const[filter,setFilter]=useState("all"); // all/unread/starred/coach/reporter/strategist/mentor
+  const[searchQ,setSearchQ]=useState("");
+  
+  // 监听 inbox 变化（其他地方添加新邮件时实时刷新）
+  useEffect(()=>{
+    const refresh=()=>setMessages(getInbox());
+    window.addEventListener("tlk_inbox_updated",refresh);
+    return()=>window.removeEventListener("tlk_inbox_updated",refresh);
+  },[]);
+  
+  // 过滤
+  const filtered=useMemo(()=>{
+    let arr=messages.filter(m=>!m.archived);
+    if(filter==="unread")arr=arr.filter(m=>!m.read);
+    else if(filter==="starred")arr=arr.filter(m=>m.starred);
+    else if(["coach","reporter","strategist","mentor"].includes(filter))arr=arr.filter(m=>m.from===filter);
+    if(searchQ.trim()){
+      const q=searchQ.trim().toLowerCase();
+      arr=arr.filter(m=>(m.subject||"").toLowerCase().includes(q)||(m.preview||"").toLowerCase().includes(q));
+    }
+    // 按时间倒序（最新在上）
+    return[...arr].sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
+  },[messages,filter,searchQ]);
+  
+  const selected=useMemo(()=>messages.find(m=>m.id===selectedId),[messages,selectedId]);
+  
+  const updateMessage=(id,patch)=>{
+    const next=messages.map(m=>m.id===id?{...m,...patch}:m);
+    setMessages(next);
+    setInbox(next);
+  };
+  const markRead=(id)=>{
+    const m=messages.find(x=>x.id===id);
+    if(m&&!m.read)updateMessage(id,{read:true});
+  };
+  const toggleStar=(id)=>{
+    const m=messages.find(x=>x.id===id);
+    if(m)updateMessage(id,{starred:!m.starred});
+  };
+  const archiveMsg=(id)=>{
+    updateMessage(id,{archived:true});
+    if(selectedId===id)setSelectedId(null);
+    showToast&&showToast("已归档","info");
+  };
+  const deleteMsg=(id)=>{
+    if(!confirm("永久删除这封邮件？"))return;
+    const next=messages.filter(m=>m.id!==id);
+    setMessages(next);
+    setInbox(next);
+    if(selectedId===id)setSelectedId(null);
+    showToast&&showToast("已删除","info");
+  };
+  const markAllRead=()=>{
+    const next=messages.map(m=>({...m,read:true}));
+    setMessages(next);
+    setInbox(next);
+    showToast&&showToast("已全部标为已读","success");
+  };
+  const exportMd=(msg)=>{
+    if(!msg)return;
+    const sender=senderInfo(msg.from);
+    const md=renderMessageAsMarkdown(msg,sender);
+    const blob=new Blob([md],{type:"text/markdown;charset=utf-8"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url;
+    a.download=`${msg.subject||"邮件"}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast&&showToast("已导出 Markdown","success");
+  };
+  const copyContent=(msg)=>{
+    if(!msg)return;
+    const sender=senderInfo(msg.from);
+    const md=renderMessageAsMarkdown(msg,sender);
+    navigator.clipboard?.writeText(md).then(
+      ()=>showToast&&showToast("已复制内容","success"),
+      ()=>showToast&&showToast("复制失败","error")
+    );
+  };
+  const mailtoLink=(msg)=>{
+    if(!msg)return"#";
+    const sender=senderInfo(msg.from);
+    const md=renderMessageAsMarkdown(msg,sender);
+    return`mailto:?subject=${encodeURIComponent("[Timelinek] "+(msg.subject||""))}&body=${encodeURIComponent(md)}`;
+  };
+  
+  // 计数
+  const stats=useMemo(()=>{
+    const active=messages.filter(m=>!m.archived);
+    return{
+      all:active.length,
+      unread:active.filter(m=>!m.read).length,
+      starred:active.filter(m=>m.starred).length,
+      coach:active.filter(m=>m.from==="coach").length,
+      reporter:active.filter(m=>m.from==="reporter").length,
+      strategist:active.filter(m=>m.from==="strategist").length,
+      mentor:active.filter(m=>m.from==="mentor").length,
+    };
+  },[messages]);
+  
+  const filterTabs=[
+    {k:"all",label:"全部",count:stats.all},
+    {k:"unread",label:"未读",count:stats.unread},
+    {k:"starred",label:"⭐ 标星",count:stats.starred},
+    {k:"coach",label:"📊 教练",count:stats.coach},
+    {k:"reporter",label:"🪞 复盘官",count:stats.reporter},
+    {k:"strategist",label:"🎯 策略师",count:stats.strategist},
+    {k:"mentor",label:"💡 导师",count:stats.mentor},
+  ];
+  
+  return(
+    <div className="fadeIn">
+      {/* 标题区 */}
+      <div style={{marginBottom:18,display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:14,flexWrap:"wrap"}}>
+        <div>
+          <div className="mono" style={{fontSize:11,letterSpacing:"0.22em",color:th.ink3,marginBottom:6,fontWeight:600}}>INBOX · AI 收件箱</div>
+          <h1 className="display" style={{fontSize:38,color:th.ink0,letterSpacing:"-0.03em",lineHeight:1}}>
+            <em style={{fontStyle:"italic"}} className="gradient-primary">收件箱</em>
+            {stats.unread>0&&<span style={{fontSize:14,fontWeight:600,color:th.accent2,marginLeft:14,letterSpacing:0,verticalAlign:"middle",padding:"3px 10px",background:th.accent+"20",borderRadius:9}}>{stats.unread} 未读</span>}
+          </h1>
+          <div style={{fontSize:12,color:th.ink2,marginTop:8,letterSpacing:"0.02em"}}>所有 AI 报告 · 洞察 · 提醒都会归档到这里</div>
+        </div>
+        <div style={{display:"flex",gap:6}}>
+          {stats.unread>0&&<button onClick={markAllRead} className="hover-lift" style={{padding:"8px 14px",borderRadius:9,background:th.glass2,color:th.ink1,fontSize:11.5,fontWeight:500,border:`1px solid ${th.glassBorder}`,letterSpacing:"0.02em"}}>全部标已读</button>}
+        </div>
+      </div>
+      
+      {/* 搜索栏 */}
+      <div className="glass" style={{padding:"10px 14px",borderRadius:11,marginBottom:14,display:"flex",alignItems:"center",gap:10}}>
+        <Ic n="search" size={14} color={th.ink3}/>
+        <input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder="搜索邮件标题或内容..." style={{flex:1,background:"transparent",border:"none",outline:"none",fontSize:13,color:th.ink0}}/>
+        {searchQ&&<button onClick={()=>setSearchQ("")} style={{padding:2,color:th.ink3}}><Ic n="close" size={12}/></button>}
+      </div>
+      
+      {/* 筛选标签 */}
+      <div style={{display:"flex",gap:5,overflowX:"auto",marginBottom:14,paddingBottom:4}} className="slim-scroll">
+        {filterTabs.map(t=>(
+          <button key={t.k} onClick={()=>setFilter(t.k)} className={`view-tab ${filter===t.k?"active":""}`} style={{flexShrink:0,whiteSpace:"nowrap"}}>
+            {t.label} {t.count>0&&<span className="mono" style={{marginLeft:4,opacity:.7,fontSize:10}}>{t.count}</span>}
+          </button>
+        ))}
+      </div>
+      
+      {/* 列表 + 详情布局（双栏） */}
+      <div style={{display:"grid",gridTemplateColumns:selected?"minmax(300px,400px) 1fr":"1fr",gap:14,minHeight:"60vh"}}>
+        {/* 邮件列表 */}
+        <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:"75vh",overflowY:"auto",paddingRight:4}} className="slim-scroll">
+          {filtered.length===0&&(
+            <div style={{padding:"60px 20px",textAlign:"center",color:th.ink3}}>
+              <div style={{fontSize:48,marginBottom:14,opacity:.4}}>📭</div>
+              <div style={{fontSize:13,color:th.ink1,fontWeight:500,marginBottom:6}}>{searchQ?"没找到匹配":filter==="unread"?"全部都看过了":filter==="starred"?"还没有标星邮件":"收件箱是空的"}</div>
+              <div style={{fontSize:11,color:th.ink3,lineHeight:1.6}}>{filter==="all"&&!searchQ?"AI 生成报告/洞察后会出现在这里":""}</div>
+            </div>
+          )}
+          {filtered.map(msg=>{
+            const sender=senderInfo(msg.from);
+            const isActive=selectedId===msg.id;
+            const dt=new Date(msg.createdAt);
+            const dStr=dt.toLocaleString("zh-CN",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});
+            return(
+              <div key={msg.id} onClick={()=>{setSelectedId(msg.id);markRead(msg.id);}} className="hover-lift" style={{padding:"12px 14px",borderRadius:12,background:isActive?th.accent+"14":(msg.read?th.glass1:th.card),border:`1px solid ${isActive?th.accent+"60":th.glassBorder}`,cursor:"pointer",position:"relative",borderLeft:`3px solid ${msg.read?"transparent":sender.color}`,transition:"all 0.15s"}}>
+                <div style={{display:"flex",gap:10,alignItems:"flex-start"}}>
+                  {/* 发件人头像 */}
+                  <div style={{width:32,height:32,borderRadius:"50%",background:sender.gradient,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:`0 2px 8px ${sender.color}40`,position:"relative"}}>
+                    <span style={{fontSize:14}}>{sender.emoji}</span>
+                    {!msg.read&&<span style={{position:"absolute",top:-2,right:-2,width:8,height:8,borderRadius:"50%",background:"#ec4899",border:`2px solid ${th.bg||"#fff"}`,boxShadow:"0 0 6px rgba(236,72,153,0.6)"}}/>}
+                  </div>
+                  <div style={{flex:1,minWidth:0}}>
+                    {/* 第一行：发件人 + 时间 */}
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginBottom:4}}>
+                      <span style={{fontSize:11.5,fontWeight:msg.read?500:700,color:msg.read?th.ink2:th.ink0,letterSpacing:"0.01em"}}>{sender.nameZh} · {sender.title}</span>
+                      <span className="mono" style={{fontSize:9.5,color:th.ink3,whiteSpace:"nowrap",letterSpacing:"0.04em"}}>{dStr}</span>
+                    </div>
+                    {/* 标题 */}
+                    <div style={{fontSize:13,fontWeight:msg.read?500:700,color:msg.read?th.ink1:th.ink0,marginBottom:5,letterSpacing:"0.01em",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                      {msg.subject}
+                    </div>
+                    {/* 摘要 */}
+                    {msg.preview&&(
+                      <div style={{fontSize:11.5,color:th.ink2,lineHeight:1.5,overflow:"hidden",textOverflow:"ellipsis",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical"}}>
+                        {msg.preview}
+                      </div>
+                    )}
+                    {/* 标签 + 操作 */}
+                    <div style={{display:"flex",gap:5,marginTop:7,alignItems:"center"}}>
+                      {Array.isArray(msg.tags)&&msg.tags.slice(0,3).map((tag,i)=>(
+                        <span key={i} className="mono" style={{fontSize:9,padding:"1px 6px",borderRadius:5,background:th.glass2,color:th.ink3,letterSpacing:"0.04em"}}>{tag}</span>
+                      ))}
+                      <div style={{flex:1}}/>
+                      <button onClick={e=>{e.stopPropagation();toggleStar(msg.id);}} style={{padding:3,opacity:msg.starred?1:0.4,color:msg.starred?"#f5a524":th.ink3}} title={msg.starred?"取消标星":"标星"}>
+                        <Ic n={msg.starred?"starFilled":"star"} size={12}/>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        
+        {/* 邮件详情 */}
+        {selected&&(
+          <div className="glass slideUp" style={{borderRadius:16,padding:0,maxHeight:"75vh",overflow:"hidden",display:"flex",flexDirection:"column"}}>
+            {/* 详情顶部 */}
+            <InboxMessageDetail th={th} msg={selected} sender={senderInfo(selected.from)} onClose={()=>setSelectedId(null)} onStar={()=>toggleStar(selected.id)} onArchive={()=>archiveMsg(selected.id)} onDelete={()=>deleteMsg(selected.id)} onExportMd={()=>exportMd(selected)} onCopy={()=>copyContent(selected)} mailtoLink={mailtoLink(selected)}/>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// 邮件详情组件
+function InboxMessageDetail({th,msg,sender,onClose,onStar,onArchive,onDelete,onExportMd,onCopy,mailtoLink}){
+  const dt=new Date(msg.createdAt);
+  const fullDate=dt.toLocaleString("zh-CN",{year:"numeric",month:"long",day:"numeric",weekday:"long",hour:"2-digit",minute:"2-digit"});
+  return(
+    <>
+      {/* 顶部 - 发件人卡片 */}
+      <div style={{padding:"22px 24px 18px",background:`linear-gradient(135deg,${sender.color}18,${sender.color}05)`,borderBottom:`1px solid ${th.glassBorder}`,position:"relative",overflow:"hidden",flexShrink:0}}>
+        <div style={{position:"absolute",top:-30,right:-20,width:130,height:130,borderRadius:"50%",background:`radial-gradient(circle,${sender.color}35,transparent 70%)`,filter:"blur(18px)",pointerEvents:"none"}}/>
+        <div style={{display:"flex",alignItems:"flex-start",gap:14,position:"relative",marginBottom:12}}>
+          <div style={{width:44,height:44,borderRadius:13,background:sender.gradient,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:`0 4px 14px ${sender.color}50`}}>
+            <span style={{fontSize:22}}>{sender.emoji}</span>
+          </div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:2}}>
+              <span style={{fontSize:14,fontWeight:700,color:th.ink0,letterSpacing:"0.01em"}}>{sender.nameZh}</span>
+              <span className="mono" style={{fontSize:9.5,color:sender.color,letterSpacing:"0.1em",fontWeight:600,textTransform:"uppercase"}}>{sender.name}</span>
+            </div>
+            <div style={{fontSize:11,color:th.ink2,marginBottom:6}}>{sender.title} · {sender.bio}</div>
+            <div className="mono" style={{fontSize:10,color:th.ink3,letterSpacing:"0.04em"}}>{fullDate}</div>
+          </div>
+          <button onClick={onClose} style={{width:30,height:30,borderRadius:8,background:th.glass2,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Ic n="close" size={13} color={th.ink2}/></button>
+        </div>
+        <h2 className="display" style={{fontSize:22,color:th.ink0,letterSpacing:"-0.02em",lineHeight:1.3,marginTop:10}}>{msg.subject}</h2>
+        {Array.isArray(msg.tags)&&msg.tags.length>0&&(
+          <div style={{display:"flex",gap:5,marginTop:10}}>
+            {msg.tags.map((tag,i)=>(
+              <span key={i} className="mono" style={{fontSize:9.5,padding:"2px 8px",borderRadius:6,background:sender.color+"22",color:sender.color,letterSpacing:"0.06em",fontWeight:600,textTransform:"uppercase"}}>{tag}</span>
+            ))}
+          </div>
+        )}
+      </div>
+      
+      {/* 内容 */}
+      <div className="slim-scroll" style={{flex:1,overflowY:"auto",padding:"22px 24px"}}>
+        <InboxMessageContent th={th} msg={msg} sender={sender}/>
+        {/* 签名 */}
+        <div style={{marginTop:24,paddingTop:18,borderTop:`1px dashed ${th.glassBorder}`,fontStyle:"italic",fontSize:12,color:th.ink2,letterSpacing:"0.02em"}}>
+          {sender.signature}
+        </div>
+      </div>
+      
+      {/* 底部操作 */}
+      <div style={{padding:"12px 20px",borderTop:`1px solid ${th.glassBorder}`,display:"flex",alignItems:"center",gap:6,flexShrink:0,flexWrap:"wrap"}}>
+        <button onClick={onStar} title={msg.starred?"取消标星":"标星"} style={{width:32,height:32,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",background:msg.starred?"#f5a52420":th.glass2,color:msg.starred?"#f5a524":th.ink2}}>
+          <Ic n={msg.starred?"starFilled":"star"} size={13}/>
+        </button>
+        <button onClick={onArchive} title="归档" style={{width:32,height:32,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",background:th.glass2,color:th.ink2}}>
+          <Ic n="archive" size={13}/>
+        </button>
+        <button onClick={onDelete} title="删除" style={{width:32,height:32,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",background:th.glass2,color:th.ink2}}>
+          <Ic n="trash" size={13}/>
+        </button>
+        <div style={{flex:1}}/>
+        <button onClick={onCopy} className="hover-lift" style={{padding:"7px 12px",borderRadius:8,background:th.glass2,color:th.ink1,fontSize:11,fontWeight:500,letterSpacing:"0.02em",display:"flex",alignItems:"center",gap:5,border:`1px solid ${th.glassBorder}`}}>
+          <Ic n="fileText" size={11}/> 复制
+        </button>
+        <button onClick={onExportMd} className="hover-lift" style={{padding:"7px 12px",borderRadius:8,background:th.glass2,color:th.ink1,fontSize:11,fontWeight:500,letterSpacing:"0.02em",display:"flex",alignItems:"center",gap:5,border:`1px solid ${th.glassBorder}`}}>
+          <Ic n="download" size={11}/> .md
+        </button>
+        <a href={mailtoLink} className="hover-lift" style={{padding:"7px 12px",borderRadius:8,background:`linear-gradient(135deg,${sender.color},${sender.color}cc)`,color:"#fff",fontSize:11,fontWeight:600,letterSpacing:"0.02em",display:"flex",alignItems:"center",gap:5,textDecoration:"none",boxShadow:`0 2px 8px ${sender.color}50`}}>
+          <Ic n="mail" size={11} color="#fff"/> 转发到邮箱
+        </a>
+      </div>
+    </>
+  );
+}
+
+// 邮件内容渲染（按消息类型选择不同样式）
+function InboxMessageContent({th,msg,sender}){
+  const c=msg.content;
+  if(!c)return<div style={{color:th.ink3,fontSize:13}}>（无内容）</div>;
+  
+  // 周度洞察
+  if(msg.type==="weekly_insight"&&typeof c==="object"){
+    return(
+      <div>
+        {c.greeting&&<div style={{fontSize:14,color:th.ink0,lineHeight:1.7,marginBottom:18,fontWeight:500}}>{c.greeting}</div>}
+        {Array.isArray(c.observations)&&c.observations.length>0&&(
+          <div style={{marginBottom:20}}>
+            <SectionHead th={th} icon="📊">我注意到</SectionHead>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {c.observations.map((o,i)=>(
+                <div key={i} style={{padding:"11px 14px",background:th.glass1,borderRadius:10,fontSize:13,color:th.ink1,lineHeight:1.65,display:"flex",gap:10,borderLeft:`2px solid ${sender.color}80`}}>
+                  <span style={{fontSize:16,flexShrink:0}}>{o.icon||"💡"}</span>
+                  <span style={{flex:1}}>{o.text}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {Array.isArray(c.suggestions)&&c.suggestions.length>0&&(
+          <div style={{marginBottom:18}}>
+            <SectionHead th={th} icon="🎯">建议</SectionHead>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {c.suggestions.map((s,i)=>(
+                <div key={i} style={{padding:"12px 14px",background:`linear-gradient(135deg,${sender.color}13,${sender.color}06)`,borderRadius:10,border:`1px dashed ${sender.color}40`}}>
+                  <div style={{fontSize:13,fontWeight:600,color:th.ink0,marginBottom:4}}>→ {s.action}</div>
+                  {s.reason&&<div style={{fontSize:11.5,color:th.ink2,lineHeight:1.6}}>{s.reason}</div>}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {c.closing&&(
+          <div style={{padding:"12px 14px",background:th.glass1,borderRadius:10,fontSize:12.5,color:th.ink1,lineHeight:1.7,fontStyle:"italic",textAlign:"center"}}>
+            {c.closing}
+          </div>
+        )}
+      </div>
+    );
+  }
+  
+  // 每日复盘
+  if(msg.type==="daily_review"&&typeof c==="object"){
+    return(
+      <div>
+        {c.title&&<h3 style={{fontSize:15,color:th.ink0,marginBottom:10,letterSpacing:"-0.01em"}}>📋 {c.title}</h3>}
+        {c.rating&&(
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,padding:"8px 14px",background:th.glass1,borderRadius:10}}>
+            <span style={{fontSize:11,color:th.ink3}}>评分</span>
+            <span style={{fontSize:14,color:"#f5a524",letterSpacing:"0.18em"}}>{"★".repeat(Math.max(1,Math.min(5,Math.round(c.rating))))+"☆".repeat(5-Math.max(1,Math.min(5,Math.round(c.rating))))}</span>
+            <span className="mono" style={{fontSize:11,color:th.ink2}}>{c.rating}/5</span>
+          </div>
+        )}
+        {c.review&&(
+          <div style={{padding:"12px 16px",background:th.glass1,borderRadius:10,fontSize:13,color:th.ink1,lineHeight:1.7,marginBottom:16,borderLeft:`2px solid ${sender.color}`}}>
+            {c.review}
+          </div>
+        )}
+        {Array.isArray(c.insights)&&c.insights.length>0&&(
+          <div style={{marginBottom:16}}>
+            <SectionHead th={th} icon="🔍">细节洞察</SectionHead>
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {c.insights.map((ins,i)=>(
+                <div key={i} style={{padding:"9px 14px",background:th.glass1,borderRadius:9,fontSize:12.5,color:th.ink1,lineHeight:1.65,display:"flex",gap:10}}>
+                  <span style={{color:sender.color,fontWeight:700}}>{i+1}.</span>
+                  <span style={{flex:1}}>{ins}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {Array.isArray(c.tomorrow)&&c.tomorrow.length>0&&(
+          <div>
+            <SectionHead th={th} icon="💡">明日提醒</SectionHead>
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {c.tomorrow.map((t,i)=>(
+                <div key={i} style={{padding:"9px 14px",background:"rgba(245,165,36,0.08)",borderRadius:9,fontSize:12.5,color:"#f5a524",lineHeight:1.6,border:"1px solid rgba(245,165,36,0.2)",display:"flex",gap:8}}>
+                  <span>→</span>
+                  <span style={{flex:1,fontWeight:500}}>{t}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+  
+  // 周报
+  if(msg.type==="weekly_report"&&typeof c==="object"){
+    return(
+      <div>
+        {c.theme&&<h3 style={{fontSize:16,color:th.ink0,marginBottom:10,letterSpacing:"-0.01em"}}>📊 本周主题：{c.theme}</h3>}
+        {c.rating&&(
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,padding:"8px 14px",background:th.glass1,borderRadius:10}}>
+            <span style={{fontSize:11,color:th.ink3}}>评分</span>
+            <span style={{fontSize:14,color:"#f5a524",letterSpacing:"0.18em"}}>{"★".repeat(Math.max(1,Math.min(5,Math.round(c.rating))))+"☆".repeat(5-Math.max(1,Math.min(5,Math.round(c.rating))))}</span>
+          </div>
+        )}
+        {c.review&&<div style={{padding:"12px 16px",background:th.glass1,borderRadius:10,fontSize:13,color:th.ink1,lineHeight:1.7,marginBottom:16,borderLeft:`2px solid ${sender.color}`}}>{c.review}</div>}
+        {Array.isArray(c.insights)&&c.insights.length>0&&(
+          <div style={{marginBottom:16}}>
+            <SectionHead th={th} icon="🔍">关键洞察</SectionHead>
+            {c.insights.map((ins,i)=>(
+              <div key={i} style={{padding:"9px 14px",background:th.glass1,borderRadius:9,fontSize:12.5,color:th.ink1,lineHeight:1.65,marginBottom:6,display:"flex",gap:10}}>
+                <span style={{color:sender.color,fontWeight:700}}>{i+1}.</span>
+                <span style={{flex:1}}>{ins}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {c.patterns&&(
+          <div style={{marginBottom:16}}>
+            <SectionHead th={th} icon="📈">模式分析</SectionHead>
+            <div style={{padding:"12px 14px",background:`linear-gradient(135deg,${sender.color}13,${sender.color}06)`,borderRadius:10,fontSize:12.5,color:th.ink1,lineHeight:1.7,border:`1px dashed ${sender.color}40`}}>{c.patterns}</div>
+          </div>
+        )}
+        {Array.isArray(c.nextWeek)&&c.nextWeek.length>0&&(
+          <div>
+            <SectionHead th={th} icon="🎯">下周建议</SectionHead>
+            {c.nextWeek.map((n,i)=>(
+              <div key={i} style={{padding:"9px 14px",background:"rgba(245,165,36,0.08)",borderRadius:9,fontSize:12.5,color:"#f5a524",lineHeight:1.6,border:"1px solid rgba(245,165,36,0.2)",marginBottom:6,display:"flex",gap:8}}>
+                <span>→</span>
+                <span style={{flex:1,fontWeight:500}}>{n}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+  
+  // AI 排期
+  if(msg.type==="schedule_plan"&&typeof c==="object"){
+    return(
+      <div>
+        {c.summary&&<div style={{padding:"12px 16px",background:th.glass1,borderRadius:10,fontSize:13,color:th.ink1,lineHeight:1.7,marginBottom:14,borderLeft:`2px solid ${sender.color}`}}>{c.summary}</div>}
+        {c.stats&&(
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:14}}>
+            {[["逾期",c.stats.overdue||0,"#ef4444"],["今日",c.stats.today||0,sender.color],["未来",c.stats.future||0,th.ink3]].map(([label,v,color])=>(
+              <div key={label} style={{padding:"10px 8px",background:th.glass1,borderRadius:9,textAlign:"center"}}>
+                <div className="display tnum" style={{fontSize:20,color,fontWeight:700,letterSpacing:"-0.03em"}}>{v}</div>
+                <div style={{fontSize:10,color:th.ink2,marginTop:3}}>{label}</div>
+              </div>
+            ))}
+          </div>
+        )}
+        {Array.isArray(c.notes)&&c.notes.length>0&&(
+          <div style={{marginBottom:14}}>
+            <SectionHead th={th} icon="📝">提示</SectionHead>
+            {c.notes.map((n,i)=>(
+              <div key={i} style={{padding:"9px 14px",background:th.glass1,borderRadius:9,fontSize:12,color:th.ink1,lineHeight:1.6,marginBottom:5}}>· {n}</div>
+            ))}
+          </div>
+        )}
+        {Array.isArray(c.plan)&&c.plan.length>0&&(
+          <div>
+            <SectionHead th={th} icon="📅">排期方案</SectionHead>
+            {c.plan.map((p,i)=>(
+              <div key={i} style={{padding:"9px 14px",background:th.glass1,borderRadius:9,fontSize:12.5,color:th.ink1,lineHeight:1.6,marginBottom:5,display:"flex",gap:10,alignItems:"flex-start"}}>
+                <span className="mono tnum" style={{color:sender.color,fontWeight:700,minWidth:42}}>{p.time||"--:--"}</span>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:500}}>任务 #{p.id}</div>
+                  {p.reason&&<div style={{fontSize:11,color:th.ink3,marginTop:2}}>{p.reason}</div>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+  
+  // 画像更新
+  if(msg.type==="profile_update"&&typeof c==="object"){
+    return(
+      <div>
+        {c.identity&&(
+          <div style={{padding:"14px 18px",background:`linear-gradient(135deg,${sender.color}15,${sender.color}06)`,borderRadius:11,marginBottom:14,fontStyle:"italic",fontSize:14,color:th.ink0,lineHeight:1.65,borderLeft:`2px solid ${sender.color}`}}>
+            "{c.identity}"
+          </div>
+        )}
+        <div style={{fontSize:12.5,color:th.ink1,lineHeight:1.7,marginBottom:14}}>
+          根据你最近 30 天的轨迹，我重新认识了你。新版画像已存在 <strong>设置 → AI 画像</strong> 中。
+        </div>
+        {c.workPattern&&(
+          <Section2 th={th} title="工作节奏" icon="⏰" sender={sender}>
+            {c.workPattern.peakTime&&<KV2 th={th} k="高效时段" v={c.workPattern.peakTime}/>}
+            {c.workPattern.lowTime&&<KV2 th={th} k="低能时段" v={c.workPattern.lowTime}/>}
+            {c.workPattern.weekRhythm&&<KV2 th={th} k="一周节奏" v={c.workPattern.weekRhythm}/>}
+          </Section2>
+        )}
+        {Array.isArray(c.strengths)&&c.strengths.length>0&&(
+          <Section2 th={th} title="优势" icon="💪" sender={sender}>
+            {c.strengths.map((s,i)=><Bullet2 key={i} th={th}>{s}</Bullet2>)}
+          </Section2>
+        )}
+        {Array.isArray(c.blockers)&&c.blockers.length>0&&(
+          <Section2 th={th} title="阻碍" icon="⚠️" sender={sender}>
+            {c.blockers.map((s,i)=><Bullet2 key={i} th={th}>{s}</Bullet2>)}
+          </Section2>
+        )}
+        {Array.isArray(c.goals)&&c.goals.length>0&&(
+          <Section2 th={th} title="推断的目标" icon="🎯" sender={sender}>
+            {c.goals.map((s,i)=><Bullet2 key={i} th={th}>{s}</Bullet2>)}
+          </Section2>
+        )}
+      </div>
+    );
+  }
+  
+  // 默认 fallback：JSON 美化展示
+  return(
+    <pre style={{whiteSpace:"pre-wrap",wordBreak:"break-word",fontSize:12,color:th.ink1,lineHeight:1.6,fontFamily:"inherit"}}>
+      {typeof c==="string"?c:JSON.stringify(c,null,2)}
+    </pre>
+  );
+}
+
+function SectionHead({th,icon,children}){
+  return(
+    <div className="mono" style={{fontSize:10.5,letterSpacing:"0.18em",color:th.ink3,marginBottom:8,fontWeight:600,display:"flex",alignItems:"center",gap:6}}>
+      <span style={{fontSize:12}}>{icon}</span>{children}
+    </div>
+  );
+}
+function Section2({th,title,icon,sender,children}){
+  return(
+    <div style={{marginBottom:14}}>
+      <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:7}}>
+        <span style={{fontSize:13}}>{icon}</span>
+        <span className="mono" style={{fontSize:10,color:sender?.color||th.ink3,letterSpacing:"0.16em",fontWeight:600,textTransform:"uppercase"}}>{title}</span>
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:5,paddingLeft:18}}>{children}</div>
+    </div>
+  );
+}
+function KV2({th,k,v}){
+  return(
+    <div style={{display:"flex",fontSize:12,gap:8,lineHeight:1.6}}>
+      <span style={{color:th.ink3,minWidth:62}}>{k}</span>
+      <span style={{color:th.ink1,flex:1}}>{v}</span>
+    </div>
+  );
+}
+function Bullet2({th,children}){
+  return(
+    <div style={{fontSize:12,color:th.ink1,lineHeight:1.7,display:"flex",gap:8}}>
+      <span style={{color:th.ink3}}>·</span>
+      <span style={{flex:1}}>{children}</span>
+    </div>
+  );
+}
+
+// 把邮件渲染为 Markdown（用于复制 / 导出 / mailto）
+function renderMessageAsMarkdown(msg,sender){
+  const dt=new Date(msg.createdAt);
+  const dStr=dt.toLocaleString("zh-CN");
+  const lines=[];
+  lines.push(`# ${msg.subject||"邮件"}`);
+  lines.push("");
+  lines.push(`> 发件人：${sender.emoji} ${sender.nameZh}（${sender.title}）`);
+  lines.push(`> 时间：${dStr}`);
+  if(Array.isArray(msg.tags)&&msg.tags.length)lines.push(`> 标签：${msg.tags.map(t=>"#"+t).join(" ")}`);
+  lines.push("");
+  lines.push("---");
+  lines.push("");
+  
+  const c=msg.content;
+  if(!c){lines.push("（无内容）");}
+  else if(typeof c==="string"){lines.push(c);}
+  else if(typeof c==="object"){
+    if(c.greeting)lines.push(c.greeting,"");
+    if(c.title)lines.push(`## ${c.title}`,"");
+    if(c.theme)lines.push(`## 本周主题：${c.theme}`,"");
+    if(c.rating)lines.push(`**评分：** ${"★".repeat(Math.round(c.rating))} ${c.rating}/5`,"");
+    if(c.identity)lines.push(`> "${c.identity}"`,"");
+    if(c.review)lines.push(`### 评价\n\n${c.review}`,"");
+    if(c.summary)lines.push(`### 概览\n\n${c.summary}`,"");
+    if(Array.isArray(c.observations)&&c.observations.length){
+      lines.push("### 我注意到");
+      c.observations.forEach(o=>lines.push(`- ${o.icon||"·"} ${o.text}`));
+      lines.push("");
+    }
+    if(Array.isArray(c.insights)&&c.insights.length){
+      lines.push("### 洞察");
+      c.insights.forEach((s,i)=>lines.push(`${i+1}. ${s}`));
+      lines.push("");
+    }
+    if(c.patterns)lines.push(`### 模式分析\n\n${c.patterns}`,"");
+    if(Array.isArray(c.suggestions)&&c.suggestions.length){
+      lines.push("### 建议");
+      c.suggestions.forEach(s=>{lines.push(`- **${s.action}**`);if(s.reason)lines.push(`  ${s.reason}`);});
+      lines.push("");
+    }
+    if(Array.isArray(c.tomorrow)&&c.tomorrow.length){
+      lines.push("### 明日提醒");
+      c.tomorrow.forEach(t=>lines.push(`- → ${t}`));
+      lines.push("");
+    }
+    if(Array.isArray(c.nextWeek)&&c.nextWeek.length){
+      lines.push("### 下周建议");
+      c.nextWeek.forEach(n=>lines.push(`- → ${n}`));
+      lines.push("");
+    }
+    if(c.closing)lines.push(`---\n\n_${c.closing}_`,"");
+  }
+  
+  lines.push("");
+  lines.push(sender.signature);
+  lines.push("");
+  lines.push("---");
+  lines.push("_由 Timelinek AI 收件箱生成_");
+  return lines.join("\n");
+}
+
 function AssistantView({th,tasks,setTasks,projects,cats,catOf,tags,journals,today,displayName,nextSortKey,showToast,emptyTask,setTrash}){
   const[messages,setMessages]=useState(()=>{
     try{const r=localStorage.getItem("tlk_chat_v1");if(r)return JSON.parse(r);}catch{}
@@ -5788,6 +6620,15 @@ function ReviewView({th,reviewSub,setReviewSub,tasks,history,cats,projects,catOf
     try{
       const data=await aiDailyReport({date,tasks,history,catOf,projOf:projOf||(id=>projects.find(p=>p.id===id)),journals});
       setAiReport({type:"daily",data,date});
+      addToInbox({
+        from:"reporter",
+        type:"daily_review",
+        subject:`今日复盘 · ${data.title||date}`,
+        preview:data.review?String(data.review).slice(0,120):"",
+        content:data,
+        rawData:{type:"daily",data,date},
+        tags:["daily","review"],
+      });
     }catch(e){showToast&&showToast("AI 报告失败: "+e.message,"error");}
     setAiLoading(false);
   };
@@ -5797,6 +6638,15 @@ function ReviewView({th,reviewSub,setReviewSub,tasks,history,cats,projects,catOf
     try{
       const data=await aiWeeklyReport({startDate:start,endDate:end,history,tasks,catOf,projOf:projOf||(id=>projects.find(p=>p.id===id)),journals});
       setAiReport({type:"weekly",data,startDate:start,endDate:end});
+      addToInbox({
+        from:"coach",
+        type:"weekly_report",
+        subject:`本周报告 · ${data.theme||(start+" ~ "+end)}`,
+        preview:data.review?String(data.review).slice(0,120):"",
+        content:data,
+        rawData:{type:"weekly",data,startDate:start,endDate:end},
+        tags:["weekly","report"],
+      });
     }catch(e){showToast&&showToast("AI 周报告失败: "+e.message,"error");}
     setAiLoading(false);
   };

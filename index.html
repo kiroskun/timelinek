@@ -2472,17 +2472,12 @@ function PomodoroPicker({th,tasks,today,catOf,onClose,onPick,setShowTaskForm}){
 function PomodoroFullscreen({th,taskId,runningTask,tasks,nowMin,onClose,toggleTimer,toggleTask,setTasks,catOf}){
   // 优先按 id 查；否则用 runningTask
   const task=taskId?tasks.find(t=>t.id===taskId):(runningTask||tasks.find(t=>!t.done));
-  if(!task){onClose();return null;}
-  const c=catOf(task.category);
-  const dur=Number(task.duration)||25;
-  const elapsed=task.actualMin||0;
-  const rem=Math.max(0,dur-elapsed);
-  const remMin=Math.floor(rem),remSec=Math.floor((rem-remMin)*60);
-  const pct=Math.min(elapsed/dur,1);
-  const isRunning=runningTask&&runningTask.id===task.id;
-
-  // 进入番茄钟时如果没在跑，提示音；时间到 (rem===0) 时响起结束音
+  // ⚠️ Hooks 必须在任何 return 之前调用，否则违反 Rules of Hooks
   const pomoEndedRef=useRef(false);
+  const dur=Number(task?.duration)||25;
+  const elapsed=task?.actualMin||0;
+  const rem=Math.max(0,dur-elapsed);
+  const isRunning=task&&runningTask&&runningTask.id===task.id;
   useEffect(()=>{
     if(rem<=0&&isRunning&&!pomoEndedRef.current){
       pomoEndedRef.current=true;
@@ -2490,6 +2485,11 @@ function PomodoroFullscreen({th,taskId,runningTask,tasks,nowMin,onClose,toggleTi
     }
     if(rem>0)pomoEndedRef.current=false;
   },[rem,isRunning]);
+  // 之后才能 return null
+  if(!task){onClose();return null;}
+  const c=catOf(task.category);
+  const remMin=Math.floor(rem),remSec=Math.floor((rem-remMin)*60);
+  const pct=Math.min(elapsed/dur,1);
 
   const onReset=()=>{
     if(!confirm("重置当前番茄钟？已计时的时长会清零"))return;

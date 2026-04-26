@@ -1597,23 +1597,30 @@ async function cloudSave(userId,p){
   const base={user_id:userId,tasks:p.tasks||[],history:p.history||[],cats:p.cats||DEFAULT_CATEGORIES,trash:p.trash||[],tags:p.tags||[],journals:p.journals||[],theme_id:p.themeId||"aurora",updated_at:new Date().toISOString()};
   // 完整字段：含 projects + AI 数据
   const full={...base,projects:p.projects||[],chat_messages:p.chatMessages||[],ai_profile:p.aiProfile||null,ai_insights:p.aiInsights||[],inbox_messages:p.inboxMessages||[]};
+  console.log("[cloudSave] 字段：",{
+    chat:Array.isArray(full.chat_messages)?full.chat_messages.length:"NA",
+    inbox:Array.isArray(full.inbox_messages)?full.inbox_messages.length:"NA",
+    profile:full.ai_profile?"有":"无",
+    insights:Array.isArray(full.ai_insights)?full.ai_insights.length:"NA",
+  });
   try{
     const{error}=await supabase.from("user_data").upsert(full,{onConflict:"user_id"});
-    if(!error)return{ok:true,partial:false};
+    if(!error){console.log("[cloudSave] ✓ 全字段成功");return{ok:true,partial:false};}
+    console.warn("[cloudSave] 主调用失败：",error.message);
     // 列不存在时逐级降级
     const msg=(error.message||"").toLowerCase();
     if(/chat_messages|ai_profile|ai_insights|inbox_messages|column|schema/i.test(msg)){
       // 去掉 AI 字段重试
       const{error:err2}=await supabase.from("user_data").upsert({...base,projects:p.projects||[]},{onConflict:"user_id"});
-      if(!err2)return{ok:true,partial:true,reason:"ai_cols_missing"};
+      if(!err2){console.warn("[cloudSave] ⚠️ 降级：AI 列不存在，仅同步基础数据");return{ok:true,partial:true,reason:"ai_cols_missing"};}
       // projects 也不在
       if(/projects/i.test((err2&&err2.message||"").toLowerCase())){
         const{error:err3}=await supabase.from("user_data").upsert(base,{onConflict:"user_id"});
-        if(!err3)return{ok:true,partial:true,reason:"projects_col_missing"};
+        if(!err3){console.warn("[cloudSave] ⚠️ 二级降级：连 projects 列都没");return{ok:true,partial:true,reason:"projects_col_missing"};}
       }
     }
     return{ok:false};
-  }catch(e){return{ok:false};}
+  }catch(e){console.error("[cloudSave] 异常",e);return{ok:false};}
 }
 function localCacheLoad(userId){
   try{
@@ -2312,13 +2319,16 @@ function MainApp({user}){
     if(saveTimer.current)clearTimeout(saveTimer.current);
     saveTimer.current=setTimeout(async()=>{
       setSyncStatus("syncing");
+      console.log("[CloudSave] 上传 AI 数据：chat=",chatMessages.length,"inbox=",inboxMessages.length,"profile=",aiProfile?"有":"无","insights=",aiInsights.length);
       const res=await cloudSave(user.id,payload);
       partialSyncRef.current=!!(res.ok&&res.partial);
       setSyncStatus(res.ok?"synced":"error");
+      if(!res.ok)console.error("[CloudSave] 失败",res);
+      else if(res.partial)console.warn("[CloudSave] 部分同步：",res.reason);
       saveTimer.current=null;
     },800);
     return()=>{if(saveTimer.current){clearTimeout(saveTimer.current);saveTimer.current=null;}};
-  },[tasks,cats,projects,trash,tags,journals,themeId,loaded,today,history,snapshot,user.id,chatVersion]);
+  },[tasks,cats,projects,trash,tags,journals,themeId,loaded,today,history,snapshot,user.id,chatVersion,inboxVersion]);
 
   useEffect(()=>{
     if(!loaded)return;

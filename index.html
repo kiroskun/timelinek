@@ -109,6 +109,7 @@ kbd{font-family:var(--f-mono);font-size:10px;padding:1px 5px;border-radius:3px;b
 .hover-lift{transition:transform 0.2s var(--ease),box-shadow 0.22s ease}
 .hover-lift:hover{transform:translateY(-2px)}
 .task-card{transition:transform 0.2s var(--ease),box-shadow 0.22s ease,opacity 0.2s ease,border-color 0.2s ease;position:relative}
+.task-card[draggable="true"]{touch-action:pan-y}
 .task-card:hover{transform:translateY(-2px)}
 .task-card:active{transform:scale(0.998)}
 .task-actions{opacity:0;transition:opacity 0.15s ease;pointer-events:none}
@@ -238,6 +239,7 @@ const DEFAULT_CATEGORIES=[
 const DEFAULT_PROJECTS=[];
 const PRIORITIES=["高","中","低"];
 const PCOLOR={高:"#ff5d7a",中:"#f5a524",低:"#a8a2c4"};
+const TAG_COLORS=["#6d5fff","#ec4899","#10d9a3","#3b9eff","#f5a524","#a855f7","#ef4444","#22d3ee","#fb923c","#84cc16"];
 
 // 三套主题
 const THEMES=[
@@ -428,12 +430,12 @@ function isOverdue(task,nowToday,nowMins){
   }
   return false;
 }
-const emptyTask={title:"",content:"",category:"work",priority:"中",due:"",timeStart:"",timeEnd:"",duration:"",repeat:false,progress:0,projectId:""};
+const emptyTask={title:"",content:"",category:"work",priority:"中",due:"",timeStart:"",timeEnd:"",duration:"",repeat:false,progress:0,projectId:"",sortKey:0,tagIds:[]};
 
 // ═══ CLOUD SYNC ═══
 async function cloudLoad(userId){try{const{data,error}=await supabase.from("user_data").select("*").eq("user_id",userId).maybeSingle();if(error)throw error;return data;}catch(e){return null;}}
 async function cloudSave(userId,p){
-  const base={user_id:userId,tasks:p.tasks||[],history:p.history||[],cats:p.cats||DEFAULT_CATEGORIES,trash:p.trash||[],theme_id:p.themeId||"aurora",updated_at:new Date().toISOString()};
+  const base={user_id:userId,tasks:p.tasks||[],history:p.history||[],cats:p.cats||DEFAULT_CATEGORIES,trash:p.trash||[],tags:p.tags||[],theme_id:p.themeId||"aurora",updated_at:new Date().toISOString()};
   try{
     const{error}=await supabase.from("user_data").upsert({...base,projects:p.projects||[]},{onConflict:"user_id"});
     if(!error)return{ok:true,partial:false};
@@ -503,6 +505,7 @@ const IC_PATHS={
   palette:<><circle cx="12" cy="12" r="10"/><circle cx="8" cy="14" r="1.5" fill="currentColor" stroke="none"/><circle cx="12" cy="8" r="1.5" fill="currentColor" stroke="none"/><circle cx="16" cy="14" r="1.5" fill="currentColor" stroke="none"/></>,
   edit:<><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></>,
   trash:<><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></>,
+  hash:<><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></>,
   filter:<polygon points="22 3 2 3 10 12.5 10 19 14 21 14 12.5 22 3"/>,
   target:<><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/></>,
   layers:<><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></>,
@@ -664,6 +667,7 @@ function MainApp({user}){
   const[cats,setCats]=useState(DEFAULT_CATEGORIES);
   const[projects,setProjects]=useState(DEFAULT_PROJECTS);
   const[trash,setTrash]=useState([]); // 回收站，30 天后自动清
+  const[tags,setTags]=useState([]); // 标签库
   const[selectedIds,setSelectedIds]=useState(new Set()); // 多选 id 集合
   const inSelectMode=selectedIds.size>0;
   const toggleSelect=id=>{
@@ -699,7 +703,7 @@ function MainApp({user}){
   const bulkComplete=()=>{
     if(selectedIds.size===0)return;
     const ids=[...selectedIds];
-    setTasks(t=>t.map(tk=>ids.includes(tk.id)?{...tk,done:true,progress:1}:tk));
+    setTasks(t=>t.map(tk=>ids.includes(tk.id)?{...tk,done:true,progress:1,completedAt:today}:tk));
     clearSelect();showToast(`已完成 ${ids.length} 项`,"success");
   };
   const[filter,setFilter]=useState("all");
@@ -737,6 +741,21 @@ function MainApp({user}){
   const catOf=useCallback(id=>catMap[id]||{name:"未分类",color:"#a8a2c4",glyph:"■"},[catMap]);
   const projMap=useMemo(()=>Object.fromEntries(projects.map(p=>[p.id,p])),[projects]);
   const projOf=useCallback(id=>projMap[id],[projMap]);
+  const tagsMap=useMemo(()=>Object.fromEntries(tags.map(t=>[t.id,t])),[tags]);
+  const addTag=(name,color)=>{
+    const cleanName=(name||"").trim();
+    if(!cleanName)return null;
+    if(tags.some(t=>t.name===cleanName)){showToast("标签已存在","error");return null;}
+    const newTag={id:"tag_"+Date.now(),name:cleanName,color:color||"#6d5fff"};
+    setTags(ts=>[...ts,newTag]);
+    return newTag;
+  };
+  const updateTag=(id,patch)=>setTags(ts=>ts.map(t=>t.id===id?{...t,...patch}:t));
+  const removeTag=id=>{
+    setTags(ts=>ts.filter(t=>t.id!==id));
+    // 同时从所有任务中移除该 tagId
+    setTasks(list=>list.map(t=>(t.tagIds||[]).includes(id)?{...t,tagIds:t.tagIds.filter(x=>x!==id)}:t));
+  };
   const greeting=getGreeting();
   const showToast=useCallback((msg,type="info")=>{setToastMsg({msg,type});setTimeout(()=>setToastMsg(null),2600);},[]);
 
@@ -784,7 +803,7 @@ function MainApp({user}){
         const lastDate=h.length>0?h.slice(-1)[0].date:null;
         if(lastDate&&lastDate<nowToday){t=t.map(tk=>tk.repeat?{...tk,done:false,actualMin:0,progress:0}:tk);}
         // 补全新字段（兼容老数据）
-        t=t.map(tk=>({progress:0,projectId:"",...tk}));
+        t=t.map(tk=>({progress:0,projectId:"",sortKey:tk.sortKey||0,tagIds:tk.tagIds||[],...tk}));
         setTasks(t);setHistory(h);
         setCats((cloud.cats&&cloud.cats.length>0)?cloud.cats.map(c=>({glyph:"■",...c})):DEFAULT_CATEGORIES);
         // projects 兜底顺序：云端 → 本地缓存 → 默认空
@@ -795,16 +814,18 @@ function MainApp({user}){
           setProjects(Array.isArray(cachedP)?cachedP:DEFAULT_PROJECTS);
         }
         setTrash(Array.isArray(cloud.trash)?cloud.trash:(localCacheLoad()?.trash||[]));
+        setTags(Array.isArray(cloud.tags)?cloud.tags:(localCacheLoad()?.tags||[]));
         setThemeId(cloud.theme_id||"aurora");
         setSyncStatus("synced");
       }else{
         const cached=localCacheLoad();
         if(cached){
-          setTasks((cached.tasks||[]).map(tk=>({progress:0,projectId:"",...tk})));
+          setTasks((cached.tasks||[]).map(tk=>({progress:0,projectId:"",sortKey:tk.sortKey||0,tagIds:tk.tagIds||[],...tk})));
           setHistory(cached.history||[]);
           setCats(cached.cats||DEFAULT_CATEGORIES);
           setProjects(cached.projects||DEFAULT_PROJECTS);
           setTrash(cached.trash||[]);
+          setTags(cached.tags||[]);
           setThemeId(cached.themeId||"aurora");
         }else{
           setTasks([{id:Date.now(),...emptyTask,title:"欢迎使用 Timelinek 👋",content:"试试左侧 ⌘K 打开命令面板 · 或者直接在下面快速添加一条任务",category:"life",priority:"中",due:nowToday,done:false,createdAt:nowToday}]);
@@ -828,7 +849,7 @@ function MainApp({user}){
   const partialSyncRef=useRef(false); // 云端缺 projects 列时为 true，阻止 poll 用云端数据覆盖本地 projects
   useEffect(()=>{
     if(!loaded)return;
-    const payload={tasks,history:snapshot(tasks,history,today),cats,projects,trash,themeId};
+    const payload={tasks,history:snapshot(tasks,history,today),cats,projects,trash,tags,themeId};
     localCacheSave(payload);
     if(saveTimer.current)clearTimeout(saveTimer.current);
     saveTimer.current=setTimeout(async()=>{
@@ -839,7 +860,7 @@ function MainApp({user}){
       saveTimer.current=null;
     },800);
     return()=>{if(saveTimer.current){clearTimeout(saveTimer.current);saveTimer.current=null;}};
-  },[tasks,cats,projects,trash,themeId,loaded,today,history,snapshot,user.id]);
+  },[tasks,cats,projects,trash,tags,themeId,loaded,today,history,snapshot,user.id]);
 
   useEffect(()=>{
     if(!loaded)return;
@@ -851,7 +872,7 @@ function MainApp({user}){
         const cloudTime=new Date(cloud.updated_at).getTime();
         const localTime=localCacheLoad()?.savedAt||0;
         if(cloudTime>localTime+1500){
-          setTasks((cloud.tasks||[]).map(tk=>({progress:0,projectId:"",...tk})));
+          setTasks((cloud.tasks||[]).map(tk=>({progress:0,projectId:"",sortKey:tk.sortKey||0,tagIds:tk.tagIds||[],...tk})));
           setHistory(cloud.history||[]);
           setCats((cloud.cats&&cloud.cats.length>0)?cloud.cats.map(c=>({glyph:"■",...c})):DEFAULT_CATEGORIES);
           // 关键防御：cloud.projects 为 null/undefined 时保留本地 projects，避免被清空
@@ -860,6 +881,7 @@ function MainApp({user}){
             setProjects(cloud.projects);
           }
           if(Array.isArray(cloud.trash))setTrash(cloud.trash);
+          if(Array.isArray(cloud.tags))setTags(cloud.tags);
           setThemeId(cloud.theme_id||"aurora");
           showToast("已同步其他设备的更新","info");
         }
@@ -909,6 +931,32 @@ function MainApp({user}){
   },[tasks,notifPerm,loaded]);
 
   // ═══ CRUD ═══
+  // 新任务自动取最大 sortKey + 1000，插到队首/队尾
+  const nextSortKey=()=>{
+    const max=tasks.reduce((m,t)=>Math.max(m,t.sortKey||0),0);
+    return max+1000;
+  };
+  // 拖拽排序：把 srcId 移到 dstId 之前/之后
+  const reorderTask=(srcId,dstId,placeBefore=true)=>{
+    if(srcId===dstId)return;
+    setTasks(list=>{
+      const src=list.find(t=>t.id===srcId);if(!src)return list;
+      // 找出 dst 当前 sortKey 和它前/后那个的 sortKey，取中点
+      const sorted=[...list].sort((a,b)=>(a.sortKey||0)-(b.sortKey||0));
+      const dstIdx=sorted.findIndex(t=>t.id===dstId);if(dstIdx<0)return list;
+      const dst=sorted[dstIdx];
+      let newKey;
+      if(placeBefore){
+        const prev=sorted[dstIdx-1];
+        newKey=prev?((prev.sortKey||0)+(dst.sortKey||0))/2:(dst.sortKey||1000)-500;
+      }else{
+        const next=sorted[dstIdx+1];
+        newKey=next?((dst.sortKey||0)+(next.sortKey||0))/2:(dst.sortKey||0)+500;
+      }
+      return list.map(t=>t.id===srcId?{...t,sortKey:newKey}:t);
+    });
+  };
+
   const quickAdd=(dueDate)=>{
     if(!quickTitle.trim())return;
     const parsed=parseNL(quickTitle,today);
@@ -923,12 +971,12 @@ function MainApp({user}){
       timeEnd:parsed.timeEnd||"",
       duration:parsed.duration||"",
       priority:parsed.priority||"中",
+      sortKey:nextSortKey(),
       createdAt:today,
       done:false
     };
     setTasks(t=>[...t,newTask]);
     setQuickTitle("");
-    // 给点反馈让用户知道 NLP 起作用了
     const detected=[];
     if(parsed.due&&parsed.due!==today)detected.push(parsed.due===addDays(today,1)?"明天":parsed.due);
     if(parsed.timeStart)detected.push(parsed.timeStart);
@@ -938,16 +986,20 @@ function MainApp({user}){
   const addOrEditTask=()=>{
     if(!taskForm.title.trim())return;
     if(editTaskId!==null){setTasks(t=>t.map(tk=>tk.id===editTaskId?{...tk,...taskForm}:tk));setEditTaskId(null);showToast("已保存","success");}
-    else{setTasks(t=>[...t,{id:Date.now(),...taskForm,createdAt:today,done:false,actualMin:0}]);showToast("已添加","success");}
+    else{setTasks(t=>[...t,{id:Date.now(),...taskForm,sortKey:nextSortKey(),createdAt:today,done:false,actualMin:0}]);showToast("已添加","success");}
     setTaskForm(emptyTask);setShowTaskForm(false);
   };
   const addFromTemplate=(tpl)=>{
-    setTasks(t=>[...t,{id:Date.now(),...emptyTask,title:tpl.title,category:tpl.category,priority:tpl.priority,duration:tpl.duration||"",repeat:tpl.repeat||false,due:today,createdAt:today,done:false}]);
+    setTasks(t=>[...t,{id:Date.now(),...emptyTask,title:tpl.title,category:tpl.category,priority:tpl.priority,duration:tpl.duration||"",repeat:tpl.repeat||false,due:today,createdAt:today,done:false,sortKey:nextSortKey()}]);
     setShowTemplates(false);showToast("已从模板添加","success");
   };
   const toggleTask=id=>{
     const task=tasks.find(t=>t.id===id);
-    setTasks(t=>t.map(tk=>tk.id===id?{...tk,done:!tk.done,progress:tk.done?0:1}:tk));
+    setTasks(t=>t.map(tk=>{
+      if(tk.id!==id)return tk;
+      const willDone=!tk.done;
+      return{...tk,done:willDone,progress:willDone?1:0,completedAt:willDone?today:""};
+    }));
     setPoppingId(id);setTimeout(()=>setPoppingId(null),340);
     if(task&&!task.done){
       const rest=tasks.filter(t=>!t.done&&t.id!==id).length;
@@ -955,7 +1007,11 @@ function MainApp({user}){
     }
   };
   const updateProgress=(id,progress)=>{
-    setTasks(t=>t.map(tk=>tk.id===id?{...tk,progress,done:progress>=1}:tk));
+    setTasks(t=>t.map(tk=>{
+      if(tk.id!==id)return tk;
+      const willDone=progress>=1;
+      return{...tk,progress,done:willDone,completedAt:willDone?today:(tk.completedAt||"")};
+    }));
   };
   const removeTask=id=>{
     const task=tasks.find(t=>t.id===id);if(!task)return;
@@ -1078,6 +1134,9 @@ function MainApp({user}){
     if(filter!=="all")r=r.filter(t=>t.category===filter);
     return[...r].sort((a,b)=>{
       if(a.done!==b.done)return a.done?1:-1;
+      // sortKey 优先（手动排序，越大越靠前）
+      const sa=a.sortKey||0,sb=b.sortKey||0;
+      if(sa!==sb)return sb-sa;
       const p={高:0,中:1,低:2};
       if(a.priority!==b.priority)return p[a.priority]-p[b.priority];
       if((a.due||"")!==(b.due||""))return(a.due||"9999").localeCompare(b.due||"9999");
@@ -1152,6 +1211,7 @@ function MainApp({user}){
     openProjectId,setOpenProjectId,
     view,setView,startPomodoro,
     selectedIds,toggleSelect,clearSelect,inSelectMode,bulkRemove,bulkSetCategory,bulkSetDue,bulkComplete,
+    tags,setTags,tagsMap,addTag,updateTag,removeTag,reorderTask,
   };
 
   return(
@@ -1197,9 +1257,9 @@ function MainApp({user}){
       {pomodoroFull&&<PomodoroFullscreen th={th} taskId={typeof pomodoroFull==="number"||typeof pomodoroFull==="string"?pomodoroFull:null} runningTask={runningTask} tasks={tasks} setTasks={setTasks} nowMin={nowMin} onClose={()=>setPomodoroFull(null)} toggleTimer={toggleTimer} toggleTask={toggleTask} catOf={catOf}/>}
       {showPomoPicker&&<PomodoroPicker th={th} tasks={tasks} today={today} catOf={catOf} onClose={()=>setShowPomoPicker(false)} onPick={(id,dur)=>{setShowPomoPicker(false);startPomodoro(id,dur);}} setShowTaskForm={()=>{setShowPomoPicker(false);setShowTaskForm(true);}}/>}
       {showProjectForm&&<ProjectForm th={th} projects={projects} editProjectId={editProjectId} onSave={saveProject} onCancel={()=>{setShowProjectForm(false);setEditProjectId(null);}}/>}
-      {showTaskForm&&<TaskForm th={th} cats={cats} projects={projects} taskForm={taskForm} setTaskForm={setTaskForm} addOrEditTask={addOrEditTask} cancelForm={cancelForm} editTaskId={editTaskId} today={today}/>}
+      {showTaskForm&&<TaskForm th={th} cats={cats} projects={projects} tags={tags} addTag={addTag} taskForm={taskForm} setTaskForm={setTaskForm} addOrEditTask={addOrEditTask} cancelForm={cancelForm} editTaskId={editTaskId} today={today}/>}
       {showTemplates&&<TemplatePicker th={th} cats={cats} setShowTemplates={setShowTemplates} addFromTemplate={addFromTemplate}/>}
-      {showSettings&&<Settings th={th} themeId={themeId} setThemeId={setThemeId} cats={cats} setCats={setCats} projects={projects} setProjects={setProjects} tasks={tasks} history={history} setTasks={setTasks} setHistory={setHistory} trash={trash} restoreTask={restoreTask} purgeTask={purgeTask} emptyTrash={emptyTrash} onClose={()=>setShowSettings(false)} user={user} onSignOut={signOut} notifPerm={notifPerm} askNotif={askNotif} installPWA={installPWA} installState={installState} today={today} showToast={showToast} catOf={catOf}/>}
+      {showSettings&&<Settings th={th} themeId={themeId} setThemeId={setThemeId} cats={cats} setCats={setCats} projects={projects} setProjects={setProjects} tasks={tasks} history={history} setTasks={setTasks} setHistory={setHistory} trash={trash} restoreTask={restoreTask} purgeTask={purgeTask} emptyTrash={emptyTrash} tags={tags} addTag={addTag} updateTag={updateTag} removeTag={removeTag} onClose={()=>setShowSettings(false)} user={user} onSignOut={signOut} notifPerm={notifPerm} askNotif={askNotif} installPWA={installPWA} installState={installState} today={today} showToast={showToast} catOf={catOf}/>}
     </div>
   );
 }
@@ -1213,6 +1273,7 @@ function ViewRouter(p){
     case "month":return<MonthView {...p}/>;
     case "projects":return<ProjectsView {...p}/>;
     case "activity":return<ActivityView {...p}/>;
+    case "recent":return<RecentView {...p}/>;
     case "review":return<ReviewView {...p}/>;
     default:return<TasksView {...p}/>;
   }
@@ -1228,6 +1289,7 @@ function SideNav({th,view,setView,projects,catOf,tasks,today,setShowSettings,set
     {id:"kanban",t:"看板",ic:"layers"},
     {id:"projects",t:"项目",ic:"folder"},
     {id:"activity",t:"活动流",ic:"list"},
+    {id:"recent",t:"近期完成",ic:"check"},
     {id:"review",t:"复盘",ic:"star"},
   ];
   const todayCount=tasks.filter(t=>t.due===today&&!t.done).length;
@@ -1518,7 +1580,7 @@ function MobileHeader({th,displayName,greeting,dateNum,today,syncStatus,doneAll,
 
 // ═══ MOBILE VIEW SWITCHER ═══
 function MobileViewSwitcher({th,view,setView}){
-  const views=[["today","今日","target"],["tomorrow","明日","arrowRight"],["week","本周","calendar"],["month","月视图","grid"],["kanban","看板","layers"],["projects","项目","folder"],["activity","活动","list"],["review","复盘","star"]];
+  const views=[["today","今日","target"],["tomorrow","明日","arrowRight"],["week","本周","calendar"],["month","月视图","grid"],["kanban","看板","layers"],["projects","项目","folder"],["activity","活动","list"],["recent","近期完成","check"],["review","复盘","star"]];
   return(
     <div className="slim-scroll" style={{display:"flex",gap:6,marginBottom:16,overflowX:"auto",paddingBottom:2,margin:"0 -14px 16px",padding:"0 14px 2px"}}>
       {views.map(([k,label,icon])=>{
@@ -1725,6 +1787,7 @@ function CmdKPalette({th,setView,setShowCmdK,setShowTaskForm,startPomodoro,setSh
       {ic:"layers",t:"看板视图",sh:"G K",act:()=>{onClose();setView("kanban");}},
       {ic:"folder",t:"项目",sh:"G P",act:()=>{onClose();setView("projects");}},
       {ic:"list",t:"活动流",sh:"G A",act:()=>{onClose();setView("activity");}},
+      {ic:"check",t:"近期完成",sh:"G C",act:()=>{onClose();setView("recent");}},
       {ic:"star",t:"复盘",sh:"G R",act:()=>{onClose();setView("review");}},
     ]},
     {g:"REVIEW",items:[
@@ -1979,9 +2042,11 @@ function TasksView(p){
   }
   // 实际展示列表：视图范围 + 分类过滤 + 排序
   let list=filter==="all"?viewRange:viewRange.filter(t=>t.category===filter);
-  // 排序：未完成在前
+  // 排序：未完成在前 + sortKey 大的在前
   list=[...list].sort((a,b)=>{
     if(a.done!==b.done)return a.done?1:-1;
+    const sa=a.sortKey||0,sb=b.sortKey||0;
+    if(sa!==sb)return sb-sa;
     const p={高:0,中:1,低:2};
     if(a.priority!==b.priority)return p[a.priority]-p[b.priority];
     return(a.timeStart||"99:99").localeCompare(b.timeStart||"99:99");
@@ -2022,7 +2087,7 @@ function TasksView(p){
       {list.length===0?(
         <EmptyState th={th} text={emptyText} icon="sparkles"/>
       ):(
-        <TaskGroupedList list={list} {...p}/>
+        <TaskGroupedList list={list} {...p} allowDrag={view==="today"||view==="tomorrow"}/>
       )}
     </div>
   );
@@ -2149,7 +2214,7 @@ function TaskGroupedList({list,th,...rest}){
 }
 
 // ═══ TASK CARD ═══
-function TaskCard({task:t,th,catOf,projOf,today,nowMin,poppingId,runningId,toggleTask,toggleTimer,removeTask,startEdit,expanded,setExpanded,updateProgress,selectedIds,toggleSelect,inSelectMode}){
+function TaskCard({task:t,th,catOf,projOf,today,nowMin,poppingId,runningId,toggleTask,toggleTimer,removeTask,startEdit,expanded,setExpanded,updateProgress,selectedIds,toggleSelect,inSelectMode,reorderTask,tagsMap,allowDrag}){
   const c=catOf(t.category);
   const p=t.projectId?projOf(t.projectId):null;
   const overdue=isOverdue(t,today,nowMin);
@@ -2157,33 +2222,58 @@ function TaskCard({task:t,th,catOf,projOf,today,nowMin,poppingId,runningId,toggl
   const popping=poppingId===t.id;
   const exp=expanded[t.id];
   const isSelected=selectedIds&&selectedIds.has(t.id);
+  const taskTags=(t.tagIds||[]).map(tid=>tagsMap&&tagsMap[tid]).filter(Boolean);
+  const[dragOver,setDragOver]=useState(null); // 'before' | 'after' | null
+  const[isDragging,setIsDragging]=useState(false);
   // 长按检测
   const longPressTimer=useRef(null);
   const startLongPress=()=>{
     if(longPressTimer.current)clearTimeout(longPressTimer.current);
     longPressTimer.current=setTimeout(()=>{
       toggleSelect&&toggleSelect(t.id);
-      // 触发触觉反馈
       if(navigator.vibrate)navigator.vibrate(15);
     },420);
   };
   const cancelLongPress=()=>{if(longPressTimer.current){clearTimeout(longPressTimer.current);longPressTimer.current=null;}};
-  // 主要点击行为：选中模式下点卡片切换选中
   const onCardClick=(e)=>{
     if(inSelectMode){
       e.stopPropagation();
       toggleSelect&&toggleSelect(t.id);
       return;
     }
-    // Cmd / Ctrl + click 进多选（桌面）
     if((e.metaKey||e.ctrlKey)&&toggleSelect){
       e.stopPropagation();
       toggleSelect(t.id);
       return;
     }
   };
+  // 拖拽
+  const onDragStart=(e)=>{
+    if(!allowDrag||t.done)return;
+    e.dataTransfer.setData("text/plain",String(t.id));
+    e.dataTransfer.effectAllowed="move";
+    setIsDragging(true);
+  };
+  const onDragOver=(e)=>{
+    if(!allowDrag||t.done||isDragging)return;
+    e.preventDefault();
+    const rect=e.currentTarget.getBoundingClientRect();
+    const before=(e.clientY-rect.top)<rect.height/2;
+    setDragOver(before?"before":"after");
+  };
+  const onDragLeave=()=>setDragOver(null);
+  const onDrop=(e)=>{
+    if(!allowDrag||t.done)return;
+    e.preventDefault();
+    const srcId=Number(e.dataTransfer.getData("text/plain"));
+    if(srcId&&srcId!==t.id&&reorderTask){
+      reorderTask(srcId,t.id,dragOver==="before");
+    }
+    setDragOver(null);
+  };
+  const onDragEnd=()=>{setIsDragging(false);setDragOver(null);};
   return(
-    <div onClick={onCardClick} onTouchStart={startLongPress} onTouchEnd={cancelLongPress} onTouchMove={cancelLongPress} onMouseDown={e=>{if(e.button===0&&!inSelectMode)startLongPress();}} onMouseUp={cancelLongPress} onMouseLeave={cancelLongPress} className="task-card glass" style={{padding:"13px 16px",borderRadius:12,borderLeft:`3px solid ${isSelected?th.accent:t.done?"#10d9a3":overdue?"#ff5d7a":c.color}`,boxShadow:isSelected?`0 0 0 2px ${th.accent},0 8px 22px ${th.accent}40`:isRunning?`0 8px 24px ${c.color}40,0 0 0 1px ${c.color}40`:undefined,opacity:t.done?0.65:1,cursor:inSelectMode?"pointer":"default",userSelect:"none"}}>
+    <div draggable={allowDrag&&!t.done&&!inSelectMode} onDragStart={onDragStart} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop} onDragEnd={onDragEnd} onClick={onCardClick} onTouchStart={startLongPress} onTouchEnd={cancelLongPress} onTouchMove={cancelLongPress} onMouseDown={e=>{if(e.button===0&&!inSelectMode)startLongPress();}} onMouseUp={cancelLongPress} onMouseLeave={cancelLongPress} className="task-card glass" style={{padding:"13px 16px",borderRadius:12,borderLeft:`3px solid ${isSelected?th.accent:t.done?"#10d9a3":overdue?"#ff5d7a":c.color}`,borderTop:dragOver==="before"?`2px solid ${th.accent}`:undefined,borderBottom:dragOver==="after"?`2px solid ${th.accent}`:undefined,boxShadow:isSelected?`0 0 0 2px ${th.accent},0 8px 22px ${th.accent}40`:isRunning?`0 8px 24px ${c.color}40,0 0 0 1px ${c.color}40`:undefined,opacity:isDragging?0.4:t.done?0.65:1,cursor:inSelectMode?"pointer":(allowDrag&&!t.done?"grab":"default"),userSelect:"none",transition:"box-shadow 0.15s,opacity 0.15s,border-color 0.1s"}}>
       <div style={{display:"flex",alignItems:"flex-start",gap:12}}>
         <button onClick={e=>{e.stopPropagation();if(inSelectMode){toggleSelect(t.id);}else{toggleTask(t.id);}}} className={popping?"checkAnim":""} style={{flexShrink:0,marginTop:2,width:20,height:20,borderRadius:6,background:isSelected?th.accent:t.done?`linear-gradient(135deg,${c.color},${c.color}aa)`:"transparent",border:isSelected?"none":t.done?"none":`1.5px solid ${th.glassBorderStrong}`,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:isSelected?`0 0 8px ${th.accent}aa`:t.done?`0 0 8px ${c.color}60`:"none"}}>
           {isSelected?<Ic n="check" size={12} color="#fff" sw={2.5}/>:t.done&&<Ic n="check" size={12} color="#fff" sw={2.5}/>}
@@ -2194,6 +2284,7 @@ function TaskCard({task:t,th,catOf,projOf,today,nowMin,poppingId,runningId,toggl
             <span style={{width:3,height:3,borderRadius:"50%",background:PCOLOR[t.priority]}}/>
             <span className="mono" style={{fontSize:9,color:th.ink3}}>{t.priority}</span>
             {p&&<span className="mono" style={{fontSize:9,padding:"2px 6px",borderRadius:6,background:p.color+"20",color:p.color,border:`1px solid ${p.color}40`}}>{p.glyph} {p.name}</span>}
+            {taskTags.map(tg=><span key={tg.id} className="mono" style={{fontSize:9,padding:"2px 6px",borderRadius:6,background:tg.color+"20",color:tg.color,border:`1px solid ${tg.color}40`}}>#{tg.name}</span>)}
             {t.repeat&&<Ic n="repeat" size={10} color={th.ink3}/>}
             {t.timeStart&&<span className="mono tnum" style={{fontSize:10,color:overdue?"#ff5d7a":th.ink3,fontWeight:overdue?600:400}}>{t.timeStart}{t.timeEnd?`–${t.timeEnd}`:""}</span>}
             {overdue&&<span className="mono" style={{fontSize:9,color:"#ff5d7a",padding:"1px 6px",borderRadius:5,background:"rgba(255,93,122,0.15)",fontWeight:600}}>逾期</span>}
@@ -2235,11 +2326,24 @@ function TaskCard({task:t,th,catOf,projOf,today,nowMin,poppingId,runningId,toggl
 }
 
 // ═══ TASK FORM ═══
-function TaskForm({th,cats,projects,taskForm,setTaskForm,addOrEditTask,cancelForm,editTaskId,today}){
+function TaskForm({th,cats,projects,tags,addTag,taskForm,setTaskForm,addOrEditTask,cancelForm,editTaskId,today}){
   const ok=taskForm.title.trim();
   const setF=(k,v)=>setTaskForm({...taskForm,[k]:v});
   const dur=calcMin(taskForm.timeStart,taskForm.timeEnd);
   const[catOpen,setCatOpen]=useState(false);
+  const[newTagText,setNewTagText]=useState("");
+  const selectedTagIds=taskForm.tagIds||[];
+  const toggleTaskTag=(id)=>{
+    const cur=selectedTagIds;
+    setF("tagIds",cur.includes(id)?cur.filter(x=>x!==id):[...cur,id]);
+  };
+  const handleAddTag=()=>{
+    const newTag=addTag&&addTag(newTagText,TAG_COLORS[(tags||[]).length%TAG_COLORS.length]);
+    if(newTag){
+      setF("tagIds",[...selectedTagIds,newTag.id]);
+      setNewTagText("");
+    }
+  };
   const curCat=cats.find(c=>c.id===taskForm.category)||cats[0];
   return(
     <div className="fadeIn modal-overlay" onClick={cancelForm}>
@@ -2313,6 +2417,25 @@ function TaskForm({th,cats,projects,taskForm,setTaskForm,addOrEditTask,cancelFor
             </select>
           </div>
         )}
+        {/* 标签选择 */}
+        <div style={{marginBottom:14}}>
+          <label className="mono" style={{display:"block",fontSize:10,color:th.ink3,marginBottom:6,letterSpacing:"0.15em"}}>标签 {selectedTagIds.length>0&&<span style={{color:th.accent}}>· 已选 {selectedTagIds.length}</span>}</label>
+          <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:8}}>
+            {(tags||[]).map(tg=>{
+              const sel=selectedTagIds.includes(tg.id);
+              return(
+                <button key={tg.id} type="button" onClick={()=>toggleTaskTag(tg.id)} style={{padding:"5px 10px",borderRadius:7,fontSize:11,fontWeight:500,background:sel?tg.color+"35":th.glass1,color:sel?tg.color:th.ink2,border:`1px solid ${sel?tg.color+"80":th.glassBorder}`,boxShadow:sel?`0 0 8px ${tg.color}40`:"none"}}>
+                  #{tg.name}
+                </button>
+              );
+            })}
+            {(!tags||tags.length===0)&&<span style={{fontSize:11,color:th.ink3,padding:"5px 4px"}}>暂无标签 · 在下方创建</span>}
+          </div>
+          <div style={{display:"flex",gap:6}}>
+            <input value={newTagText} onChange={e=>setNewTagText(e.target.value)} onKeyDown={e=>{if(e.isComposing||e.keyCode===229)return;if(e.key==="Enter"){e.preventDefault();handleAddTag();}}} placeholder="新建标签…" className="inp" style={{padding:"7px 11px",fontSize:12,flex:1}}/>
+            <button type="button" onClick={handleAddTag} disabled={!newTagText.trim()} style={{padding:"7px 14px",borderRadius:9,background:newTagText.trim()?`linear-gradient(135deg,${th.accent},${th.accent3})`:th.glass2,color:newTagText.trim()?"#fff":th.ink3,fontSize:12,fontWeight:600,opacity:newTagText.trim()?1:0.5}}>+ 添加</button>
+          </div>
+        </div>
         <label className="glass" style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",borderRadius:11,cursor:"pointer",marginBottom:16}}>
           <div onClick={e=>{e.preventDefault();setF("repeat",!taskForm.repeat);}} className="switch" style={{background:taskForm.repeat?`linear-gradient(135deg,${th.accent},${th.accent3})`:th.glass3}}>
             <div className="switch-dot" style={{left:taskForm.repeat?21:3}}/>
@@ -2934,9 +3057,205 @@ function ActivityView({th,tasks:allTasks,searchedTasks,history,catOf,today}){
   );
 }
 
+// ═══ RECENT VIEW · 近期完成 ═══
+function RecentView({th,tasks,catOf,projOf,tags,tagsMap,today,history,cats}){
+  const[range,setRange]=useState("30"); // 7 / 30 / 90 / all
+  const[catFilter,setCatFilter]=useState("all");
+  const[tagFilter,setTagFilter]=useState("all"); // 'all' or tag id
+
+  // 收集所有已完成任务（来自当前 tasks 列表 + history 中已完成且当前已不在 tasks 的）
+  const completedItems=useMemo(()=>{
+    const items=[];
+    // 1. 当前 tasks 列表里 done=true 的
+    tasks.forEach(t=>{
+      if(!t.done)return;
+      // completedAt 兜底：用 due 或 today
+      const ca=t.completedAt||t.due||today;
+      items.push({...t,completedAt:ca,_source:"current"});
+    });
+    // 2. history 里每天的快照中 done=true 但当前 tasks 里已经没有（说明被重置或删除）的
+    const curIds=new Set(tasks.map(t=>t.id));
+    (history||[]).forEach(h=>{
+      (h.tasks||[]).forEach(ht=>{
+        if(!ht.done)return;
+        if(curIds.has(ht.id))return; // 当前列表里已统计过
+        items.push({...ht,completedAt:h.date,_source:"history"});
+      });
+    });
+    return items;
+  },[tasks,history,today]);
+
+  // 时间范围过滤
+  const cutoffDate=useMemo(()=>{
+    if(range==="all")return null;
+    const days=parseInt(range,10);
+    return addDays(today,-days);
+  },[range,today]);
+
+  // 应用所有筛选
+  const filtered=useMemo(()=>{
+    let arr=completedItems;
+    if(cutoffDate)arr=arr.filter(t=>(t.completedAt||"")>=cutoffDate);
+    if(catFilter!=="all")arr=arr.filter(t=>t.category===catFilter);
+    if(tagFilter!=="all")arr=arr.filter(t=>(t.tagIds||[]).includes(tagFilter));
+    // 按完成日期降序，同一天内按 timeStart 降序
+    arr=[...arr].sort((a,b)=>{
+      const ad=a.completedAt||"",bd=b.completedAt||"";
+      if(ad!==bd)return bd.localeCompare(ad);
+      return(b.timeStart||"").localeCompare(a.timeStart||"");
+    });
+    return arr;
+  },[completedItems,cutoffDate,catFilter,tagFilter]);
+
+  // 按日期分组
+  const grouped=useMemo(()=>{
+    const g={};
+    filtered.forEach(t=>{
+      const d=t.completedAt||today;
+      if(!g[d])g[d]=[];
+      g[d].push(t);
+    });
+    return Object.keys(g).sort().reverse().map(d=>({date:d,tasks:g[d]}));
+  },[filtered,today]);
+
+  // 顶部成就统计
+  const stats=useMemo(()=>{
+    const w7=addDays(today,-7),w30=addDays(today,-30);
+    const last7=completedItems.filter(t=>(t.completedAt||"")>=w7).length;
+    const last30=completedItems.filter(t=>(t.completedAt||"")>=w30).length;
+    // 连续天数：从 today 往回看，每天必须有完成
+    let streak=0;
+    for(let i=0;i<365;i++){
+      const d=addDays(today,-i);
+      const hasDone=completedItems.some(t=>(t.completedAt||"")===d);
+      if(hasDone)streak++;else if(i>0)break;else continue; // 今天没完成也允许（可能还没到结束时间）
+    }
+    return{last7,last30,total:completedItems.length,streak};
+  },[completedItems,today]);
+
+  const dateLabel=(d)=>{
+    if(d===today)return"今天";
+    if(d===addDays(today,-1))return"昨天";
+    if(d===addDays(today,-2))return"前天";
+    const diff=Math.round((new Date(today)-new Date(d))/(24*3600*1000));
+    if(diff>=3&&diff<=6)return`${diff} 天前`;
+    return d;
+  };
+  const weekday=(d)=>{
+    try{return["日","一","二","三","四","五","六"][new Date(d).getDay()];}catch{return"";}
+  };
+
+  return(
+    <div className="fadeIn">
+      <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",marginBottom:16,flexWrap:"wrap",gap:12}}>
+        <div>
+          <div className="mono" style={{fontSize:11,letterSpacing:"0.22em",color:th.ink3,marginBottom:6,fontWeight:600}}>RECENT · {filtered.length} 项</div>
+          <h1 className="display" style={{fontSize:44,color:th.ink0,lineHeight:0.95,letterSpacing:"-0.03em"}}>
+            <em style={{fontStyle:"italic"}} className="gradient-primary">近期完成</em>
+          </h1>
+        </div>
+      </div>
+
+      {/* 成就统计 */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:18}}>
+        {[
+          {label:"近 7 天",val:stats.last7,sub:"项",color:th.accent},
+          {label:"近 30 天",val:stats.last30,sub:"项",color:th.accent2},
+          {label:"累计",val:stats.total,sub:"项",color:th.accent3},
+          {label:"连续",val:stats.streak,sub:"天",color:"#10d9a3"},
+        ].map(s=>(
+          <div key={s.label} className="glass" style={{padding:"14px 14px",borderRadius:13,borderTop:`2px solid ${s.color}`,boxShadow:`0 0 0 1px ${s.color}20`}}>
+            <div className="mono" style={{fontSize:9,color:th.ink3,letterSpacing:"0.14em",fontWeight:600,marginBottom:4}}>{s.label}</div>
+            <div style={{display:"flex",alignItems:"baseline",gap:4}}>
+              <span className="display tnum" style={{fontSize:26,color:s.color,letterSpacing:"-0.04em",lineHeight:1}}>{s.val}</span>
+              <span className="mono" style={{fontSize:10,color:th.ink3}}>{s.sub}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* 筛选区 */}
+      <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:18}}>
+        <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:4}} className="slim-scroll">
+          {[["7","近 7 天"],["30","近 30 天"],["90","近 90 天"],["all","全部"]].map(([k,l])=>(
+            <button key={k} onClick={()=>setRange(k)} className={`view-tab ${range===k?"active":""}`} style={{flexShrink:0}}>{l}</button>
+          ))}
+        </div>
+        {/* 分类 */}
+        <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:4}} className="slim-scroll">
+          <button onClick={()=>setCatFilter("all")} className={`view-tab ${catFilter==="all"?"active":""}`} style={{flexShrink:0}}>全部分类</button>
+          {cats.map(c=>{
+            const n=completedItems.filter(t=>t.category===c.id).length;
+            if(n===0)return null;
+            const act=catFilter===c.id;
+            return<button key={c.id} onClick={()=>setCatFilter(c.id)} className={`view-tab ${act?"active":""}`} style={{flexShrink:0,background:act?c.color+"30":th.glass1,color:act?c.color:th.ink2,borderLeft:act?`2px solid ${c.color}`:"none"}}><span style={{color:c.color}}>{c.glyph}</span> {c.name} · {n}</button>;
+          })}
+        </div>
+        {/* 标签筛选 */}
+        {tags&&tags.length>0&&(
+          <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:4}} className="slim-scroll">
+            <button onClick={()=>setTagFilter("all")} className={`view-tab ${tagFilter==="all"?"active":""}`} style={{flexShrink:0}}>全部标签</button>
+            {tags.map(tg=>{
+              const n=completedItems.filter(t=>(t.tagIds||[]).includes(tg.id)).length;
+              if(n===0)return null;
+              const act=tagFilter===tg.id;
+              return<button key={tg.id} onClick={()=>setTagFilter(tg.id)} className="view-tab" style={{flexShrink:0,background:act?tg.color+"35":th.glass1,color:act?tg.color:th.ink2,border:`1px solid ${act?tg.color+"80":th.glassBorder}`,boxShadow:act?`0 0 8px ${tg.color}40`:"none"}}>#{tg.name} · {n}</button>;
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* 分组列表 */}
+      {grouped.length===0?(
+        <EmptyState th={th} text={range==="all"?"还没有完成任何任务":"该时间范围内没有完成的任务"} icon="check"/>
+      ):(
+        <div style={{display:"flex",flexDirection:"column",gap:18}}>
+          {grouped.map(({date,tasks:dayTasks})=>{
+            const totalMin=dayTasks.reduce((s,t)=>s+(t.actualMin||0),0);
+            return(
+              <div key={date}>
+                <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+                  <span className="display" style={{fontSize:18,color:th.ink0,letterSpacing:"-0.02em"}}>{dateLabel(date)}</span>
+                  <span className="mono" style={{fontSize:10,color:th.ink3,letterSpacing:"0.1em"}}>· 周{weekday(date)} · {date.slice(5).replace("-","/")}</span>
+                  <div style={{flex:1,height:1,background:th.glassBorder}}/>
+                  <span className="mono tnum" style={{fontSize:11,color:th.ink2,fontWeight:600}}>✓ {dayTasks.length}{totalMin>0?` · ${fmtMin(totalMin)}`:""}</span>
+                </div>
+                <div style={{display:"flex",flexDirection:"column",gap:5}}>
+                  {dayTasks.map((t,i)=>{
+                    const c=catOf(t.category);
+                    const proj=t.projectId&&projOf?projOf(t.projectId):null;
+                    const itemTags=(t.tagIds||[]).map(tid=>tagsMap&&tagsMap[tid]).filter(Boolean);
+                    return(
+                      <div key={t.id+"-"+date+"-"+i} className="glass hover-lift" style={{padding:"10px 14px",borderRadius:10,borderLeft:`2px solid ${c.color}`,display:"flex",alignItems:"center",gap:10,opacity:0.92}}>
+                        <div style={{width:16,height:16,borderRadius:5,background:`linear-gradient(135deg,${c.color},${c.color}aa)`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:`0 0 6px ${c.color}60`}}>
+                          <Ic n="check" size={9} color="#fff" sw={2.5}/>
+                        </div>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontSize:13,color:th.ink1,textDecoration:"line-through",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontWeight:500}}>{t.title}</div>
+                          <div style={{display:"flex",gap:6,marginTop:3,flexWrap:"wrap",alignItems:"center"}}>
+                            <span className="mono" style={{fontSize:9,color:c.color,fontWeight:600}}>{c.glyph} {c.name}</span>
+                            {proj&&<span className="mono" style={{fontSize:9,color:proj.color}}>· {proj.glyph} {proj.name}</span>}
+                            {itemTags.map(tg=><span key={tg.id} className="mono" style={{fontSize:9,padding:"1px 6px",borderRadius:5,background:tg.color+"20",color:tg.color}}>#{tg.name}</span>)}
+                            {t.actualMin>0&&<span className="mono tnum" style={{fontSize:9,color:th.ink3}}>· ⏱ {fmtMin(t.actualMin)}</span>}
+                            {t.timeStart&&<span className="mono tnum" style={{fontSize:9,color:th.ink3}}>· {t.timeStart}</span>}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ═══ REVIEW VIEW ═══
 function ReviewView({th,reviewSub,setReviewSub,tasks,history,cats,projects,catOf,today}){
-  const tabs=[["today","今日"],["week","本周"],["month","本月"],["heatmap","热力图"],["habits","习惯"],["all","全部历史"]];
+  const tabs=[["today","今日"],["week","本周"],["month","本月"],["weekly","周报告"],["timeOfDay","时段"],["burndown","燃尽"],["catTime","耗时"],["heatmap","热力图"],["habits","习惯"],["all","历史"]];
   return(
     <div className="fadeIn">
       <div style={{marginBottom:16}}>
@@ -2953,9 +3272,455 @@ function ReviewView({th,reviewSub,setReviewSub,tasks,history,cats,projects,catOf
       {reviewSub==="today"&&<TodayReview th={th} tasks={tasks} catOf={catOf} today={today}/>}
       {reviewSub==="week"&&<RangeReview th={th} tasks={tasks} history={history} catOf={catOf} today={today} days={7} label="本周"/>}
       {reviewSub==="month"&&<RangeReview th={th} tasks={tasks} history={history} catOf={catOf} today={today} days={30} label="本月"/>}
+      {reviewSub==="weekly"&&<WeeklyReport th={th} tasks={tasks} history={history} cats={cats} projects={projects} catOf={catOf} today={today}/>}
+      {reviewSub==="timeOfDay"&&<TimeOfDayHeatmap th={th} tasks={tasks} history={history} today={today}/>}
+      {reviewSub==="burndown"&&<BurndownChart th={th} tasks={tasks} history={history} projects={projects} today={today}/>}
+      {reviewSub==="catTime"&&<CategoryTimeAnalysis th={th} tasks={tasks} history={history} cats={cats} catOf={catOf} today={today}/>}
       {reviewSub==="heatmap"&&<HeatmapView th={th} tasks={tasks} history={history} today={today}/>}
       {reviewSub==="habits"&&<HabitsView th={th} tasks={tasks} history={history} catOf={catOf} today={today}/>}
       {reviewSub==="all"&&<AllHistory th={th} tasks={tasks} history={history} catOf={catOf} today={today}/>}
+    </div>
+  );
+}
+
+// ═══ 1. 周报告（自动生成）═══
+function WeeklyReport({th,tasks,history,cats,projects,catOf,today}){
+  const data=useMemo(()=>{
+    const weekStart=addDays(today,-6); // 近 7 天
+    // 收集本周完成的任务
+    const completedThisWeek=[];
+    tasks.forEach(t=>{
+      if(t.done&&(t.completedAt||"")>=weekStart)completedThisWeek.push({...t,_d:t.completedAt});
+    });
+    const curIds=new Set(tasks.map(t=>t.id));
+    (history||[]).forEach(h=>{
+      if(h.date<weekStart)return;
+      (h.tasks||[]).forEach(ht=>{if(ht.done&&!curIds.has(ht.id))completedThisWeek.push({...ht,_d:h.date});});
+    });
+    // 上周对比
+    const lastWeekStart=addDays(today,-13),lastWeekEnd=addDays(today,-7);
+    const completedLastWeek=[];
+    tasks.forEach(t=>{
+      const d=t.completedAt||"";
+      if(t.done&&d>=lastWeekStart&&d<lastWeekEnd)completedLastWeek.push(t);
+    });
+    (history||[]).forEach(h=>{
+      if(h.date<lastWeekStart||h.date>=lastWeekEnd)return;
+      (h.tasks||[]).forEach(ht=>{if(ht.done&&!curIds.has(ht.id))completedLastWeek.push(ht);});
+    });
+    // 按分类汇总
+    const byCat={};
+    completedThisWeek.forEach(t=>{const k=t.category||"other";byCat[k]=(byCat[k]||0)+1;});
+    const topCat=Object.entries(byCat).sort((a,b)=>b[1]-a[1])[0];
+    // 总耗时
+    const totalMin=completedThisWeek.reduce((s,t)=>s+(t.actualMin||0),0);
+    const lastMin=completedLastWeek.reduce((s,t)=>s+(t.actualMin||0),0);
+    // 每日完成量
+    const daily=Array.from({length:7},(_,i)=>{
+      const d=addDays(today,-(6-i));
+      const n=completedThisWeek.filter(t=>t._d===d).length;
+      return{date:d,count:n,wd:["日","一","二","三","四","五","六"][new Date(d).getDay()]};
+    });
+    const maxDaily=Math.max(...daily.map(d=>d.count),1);
+    // 最高效那天
+    const bestDay=[...daily].sort((a,b)=>b.count-a.count)[0];
+    // 项目活跃度
+    const projN={};
+    completedThisWeek.forEach(t=>{if(t.projectId)projN[t.projectId]=(projN[t.projectId]||0)+1;});
+    const activeProjects=Object.entries(projN).map(([id,n])=>({proj:projects.find(p=>p.id===id),n})).filter(x=>x.proj).sort((a,b)=>b.n-a.n);
+    return{completedThisWeek,completedLastWeek,byCat,topCat,totalMin,lastMin,daily,maxDaily,bestDay,activeProjects};
+  },[tasks,history,projects,today]);
+
+  const{completedThisWeek,completedLastWeek,topCat,totalMin,lastMin,daily,maxDaily,bestDay,activeProjects}=data;
+  const cur=completedThisWeek.length,prev=completedLastWeek.length;
+  const delta=cur-prev,deltaPct=prev>0?Math.round((delta/prev)*100):(cur>0?100:0);
+  const minDelta=totalMin-lastMin;
+
+  return(
+    <div className="fadeIn">
+      {/* 顶部摘要 */}
+      <div className="glass" style={{padding:"22px 24px",borderRadius:18,marginBottom:18,position:"relative",overflow:"hidden"}}>
+        <Blob3D size={140} hue={260} style={{right:-40,top:-30,opacity:0.25}}/>
+        <div style={{position:"relative"}}>
+          <div className="mono" style={{fontSize:10,letterSpacing:"0.22em",color:th.ink3,marginBottom:6,fontWeight:600}}>WEEKLY DIGEST · {addDays(today,-6).slice(5)} – {today.slice(5)}</div>
+          <div className="display" style={{fontSize:32,color:th.ink0,letterSpacing:"-0.03em",lineHeight:1.05,marginBottom:10}}>
+            本周完成了 <em style={{fontStyle:"italic"}} className="gradient-primary">{cur}</em> 项任务
+          </div>
+          <div style={{fontSize:13,color:th.ink2,lineHeight:1.7}}>
+            {cur===0?"本周还没有完成任何任务，新的开始随时可以从一小步迈出。":
+              `${totalMin>0?`累计专注时长 ${fmtMin(totalMin)}，`:""}${delta!==0?(delta>0?`比上周多 ${delta} 项 (+${deltaPct}%)`:`比上周少 ${Math.abs(delta)} 项 (${deltaPct}%)`)+"，":""}${bestDay&&bestDay.count>0?`最高效是周${bestDay.wd}（完成 ${bestDay.count} 项）。`:""}${topCat?`主要在「${(catOf(topCat[0]).name)}」类别投入精力。`:""}`
+            }
+          </div>
+        </div>
+      </div>
+
+      {/* KPI 卡 */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:10,marginBottom:18}}>
+        <StatCard th={th} label="完成任务" value={cur} sub={delta>=0?`↑${delta} vs 上周`:`↓${Math.abs(delta)} vs 上周`} color={th.accent}/>
+        <StatCard th={th} label="专注时长" value={fmtMin(totalMin)||"—"} sub={minDelta!==0?(minDelta>0?`↑${fmtMin(minDelta)}`:`↓${fmtMin(Math.abs(minDelta))}`):"—"} color={th.accent2}/>
+        <StatCard th={th} label="日均完成" value={(cur/7).toFixed(1)} sub="项/天" color={th.accent3}/>
+        <StatCard th={th} label="活跃天数" value={daily.filter(d=>d.count>0).length} sub="/ 7 天" color="#10d9a3"/>
+      </div>
+
+      {/* 每日柱状 */}
+      <div className="glass" style={{padding:18,borderRadius:14,marginBottom:14}}>
+        <div className="mono" style={{fontSize:10,letterSpacing:"0.18em",color:th.ink3,marginBottom:14,fontWeight:600}}>每日完成量</div>
+        <div style={{display:"flex",alignItems:"flex-end",gap:6,height:120}}>
+          {daily.map(d=>{
+            const h=d.count===0?6:Math.max(12,(d.count/maxDaily)*100);
+            const isToday=d.date===today;
+            const isBest=d.count===maxDaily&&d.count>0;
+            return(
+              <div key={d.date} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
+                <div className="mono tnum" style={{fontSize:11,color:isBest?th.accent:th.ink2,fontWeight:isBest?700:500}}>{d.count}</div>
+                <div style={{width:"100%",height:`${h}px`,borderRadius:"6px 6px 0 0",background:d.count===0?th.glass2:`linear-gradient(180deg,${isToday?th.accent3:th.accent} 0%,${isBest?th.accent2:th.accent}80 100%)`,boxShadow:isBest?`0 0 12px ${th.accent}80`:undefined,transition:"height 0.6s var(--ease)"}}/>
+                <div className="mono" style={{fontSize:9,color:th.ink3,letterSpacing:"0.05em",fontWeight:isToday?700:400}}>{d.wd}</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 活跃项目 */}
+      {activeProjects.length>0&&(
+        <div className="glass" style={{padding:18,borderRadius:14,marginBottom:14}}>
+          <div className="mono" style={{fontSize:10,letterSpacing:"0.18em",color:th.ink3,marginBottom:12,fontWeight:600}}>活跃项目</div>
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {activeProjects.slice(0,5).map(({proj,n})=>{
+              const total=tasks.filter(t=>t.projectId===proj.id).length;
+              return(
+                <div key={proj.id} style={{display:"flex",alignItems:"center",gap:12}}>
+                  <span style={{fontSize:14,color:proj.color,minWidth:18}}>{proj.glyph}</span>
+                  <span style={{flex:1,fontSize:13,color:th.ink1,fontWeight:500}}>{proj.name}</span>
+                  <div style={{flex:2,height:6,borderRadius:3,background:th.glass2,overflow:"hidden",maxWidth:180}}>
+                    <div style={{width:`${(n/cur)*100}%`,height:"100%",background:`linear-gradient(90deg,${proj.color},${proj.color}aa)`,boxShadow:`0 0 6px ${proj.color}`}}/>
+                  </div>
+                  <span className="mono tnum" style={{fontSize:11,color:th.ink2,minWidth:50,textAlign:"right"}}>{n}<span style={{color:th.ink3}}>/{total}</span></span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══ 2. 完成时段热力图（24h × 7d）═══
+function TimeOfDayHeatmap({th,tasks,history,today}){
+  const data=useMemo(()=>{
+    // 收集所有"完成时刻"。优先用 timeStart，否则按 hour bucket = 任务日期+12（默认中午）
+    const events=[];
+    const allDone=[];
+    tasks.forEach(t=>{if(t.done&&(t.completedAt||""))allDone.push({date:t.completedAt,timeStart:t.timeStart});});
+    const curIds=new Set(tasks.map(t=>t.id));
+    (history||[]).forEach(h=>{
+      (h.tasks||[]).forEach(ht=>{if(ht.done&&!curIds.has(ht.id))allDone.push({date:h.date,timeStart:ht.timeStart});});
+    });
+    // 时段分桶 24h × 7（周一-周日）
+    const buckets=Array.from({length:7},()=>Array(24).fill(0));
+    let total=0;
+    allDone.forEach(t=>{
+      try{
+        const d=new Date(t.date);if(isNaN(d.getTime()))return;
+        const wd=(d.getDay()+6)%7; // 周一为 0
+        let hour=12;
+        if(t.timeStart){const[h]=t.timeStart.split(":").map(Number);if(!isNaN(h))hour=h;}
+        buckets[wd][hour]+=1;
+        total+=1;
+      }catch{}
+    });
+    let max=0;buckets.forEach(row=>row.forEach(v=>{if(v>max)max=v;}));
+    // 找峰值时段
+    let peakHour=-1,peakHourCount=0;
+    for(let h=0;h<24;h++){let c=0;for(let w=0;w<7;w++)c+=buckets[w][h];if(c>peakHourCount){peakHourCount=c;peakHour=h;}}
+    let peakDay=-1,peakDayCount=0;
+    for(let w=0;w<7;w++){let c=0;for(let h=0;h<24;h++)c+=buckets[w][h];if(c>peakDayCount){peakDayCount=c;peakDay=w;}}
+    return{buckets,max,total,peakHour,peakHourCount,peakDay,peakDayCount};
+  },[tasks,history]);
+
+  const{buckets,max,total,peakHour,peakDay}=data;
+  const wdNames=["周一","周二","周三","周四","周五","周六","周日"];
+
+  const cellColor=(v)=>{
+    if(v===0)return th.glass2;
+    const intensity=Math.min(v/max,1);
+    // 用 accent 颜色加透明度
+    const opacity=Math.round((0.2+intensity*0.8)*255).toString(16).padStart(2,"0");
+    return th.accent+opacity;
+  };
+
+  if(total===0){
+    return<EmptyState th={th} text="还没有足够的完成数据 · 至少需要完成几条带时间的任务" icon="clock"/>;
+  }
+
+  return(
+    <div className="fadeIn">
+      <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap"}}>
+        <StatCard th={th} label="高峰时段" value={peakHour>=0?`${String(peakHour).padStart(2,"0")}:00`:"—"} sub="最常完成任务" color={th.accent}/>
+        <StatCard th={th} label="高峰日" value={peakDay>=0?wdNames[peakDay]:"—"} sub="最高效的一天" color={th.accent2}/>
+        <StatCard th={th} label="总完成" value={total} sub="项任务" color={th.accent3}/>
+      </div>
+      <div className="glass" style={{padding:"18px 14px",borderRadius:14,marginBottom:14,overflowX:"auto"}}>
+        <div className="mono" style={{fontSize:10,letterSpacing:"0.18em",color:th.ink3,marginBottom:14,fontWeight:600,paddingLeft:30}}>完成时段分布 · 24h × 7day</div>
+        <div style={{minWidth:520,display:"inline-block"}}>
+          {/* 列标签 0/4/8/12/16/20 */}
+          <div style={{display:"flex",alignItems:"center",marginBottom:6,paddingLeft:30}}>
+            {Array.from({length:24},(_,h)=>(
+              <div key={h} style={{flex:1,textAlign:"center"}}>
+                {(h%4===0)&&<span className="mono" style={{fontSize:8,color:th.ink3,letterSpacing:"0.05em"}}>{String(h).padStart(2,"0")}</span>}
+              </div>
+            ))}
+          </div>
+          {buckets.map((row,wi)=>(
+            <div key={wi} style={{display:"flex",alignItems:"center",gap:0,marginBottom:2}}>
+              <div className="mono" style={{width:30,fontSize:9,color:th.ink3,fontWeight:wi===peakDay?700:400,letterSpacing:"0.04em"}}>{wdNames[wi]}</div>
+              {row.map((v,h)=>{
+                const isPeak=v>0&&v===max;
+                return(
+                  <div key={h} title={`${wdNames[wi]} ${String(h).padStart(2,"0")}:00 · ${v} 项`} style={{flex:1,height:18,margin:"0 1px",borderRadius:3,background:cellColor(v),boxShadow:isPeak?`0 0 6px ${th.accent}`:"none",transition:"transform 0.15s",cursor:"default"}}/>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+      <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:th.glass1,borderRadius:10}}>
+        <span className="mono" style={{fontSize:10,color:th.ink3,letterSpacing:"0.08em"}}>少</span>
+        {[0.2,0.4,0.6,0.8,1].map(o=><div key={o} style={{width:18,height:14,borderRadius:3,background:th.accent+Math.round(o*255).toString(16).padStart(2,"0")}}/>)}
+        <span className="mono" style={{fontSize:10,color:th.ink3,letterSpacing:"0.08em"}}>多</span>
+        <div style={{flex:1}}/>
+        <span className="mono" style={{fontSize:10,color:th.ink3,letterSpacing:"0.08em"}}>悬停单元格查看详情</span>
+      </div>
+    </div>
+  );
+}
+
+// ═══ 3. 项目燃尽图 ═══
+function BurndownChart({th,tasks,history,projects,today}){
+  const[selectedId,setSelectedId]=useState(projects[0]&&projects[0].id);
+  const proj=projects.find(p=>p.id===selectedId);
+
+  const data=useMemo(()=>{
+    if(!proj)return null;
+    const projTasks=tasks.filter(t=>t.projectId===proj.id);
+    if(projTasks.length===0)return{empty:true,total:0};
+    // 找最早 createdAt 作为起点
+    const dates=projTasks.map(t=>t.createdAt).filter(Boolean).sort();
+    const startDate=dates[0]||today;
+    const totalDays=Math.max(7,Math.ceil((new Date(today)-new Date(startDate))/(24*3600*1000))+1);
+    const start=addDays(today,-(totalDays-1));
+    // 每天结束时仍未完成的数量
+    const points=[];
+    const total=projTasks.length;
+    for(let i=0;i<totalDays;i++){
+      const d=addDays(start,i);
+      // 在 d 这天结束时，多少任务已完成？
+      const doneByThisDay=projTasks.filter(t=>{
+        if(!t.done)return false;
+        const ca=t.completedAt||t.due||"";
+        return ca&&ca<=d;
+      }).length;
+      const remaining=total-doneByThisDay;
+      // 理想线：线性递减
+      const ideal=Math.max(0,total-Math.round((total/(totalDays-1))*i));
+      points.push({date:d,remaining,done:doneByThisDay,ideal});
+    }
+    return{empty:false,points,total,start,totalDays};
+  },[proj,tasks,today]);
+
+  if(projects.length===0)return<EmptyState th={th} text="还没有项目 · 创建项目后可以看燃尽图" icon="folder"/>;
+
+  return(
+    <div className="fadeIn">
+      {/* 项目选择 */}
+      <div style={{display:"flex",gap:6,overflowX:"auto",marginBottom:16,paddingBottom:4}} className="slim-scroll">
+        {projects.map(p=>{
+          const act=p.id===selectedId;
+          return<button key={p.id} onClick={()=>setSelectedId(p.id)} className={`view-tab ${act?"active":""}`} style={{flexShrink:0,background:act?p.color+"30":th.glass1,color:act?p.color:th.ink2,borderLeft:act?`2px solid ${p.color}`:"none"}}>
+            <span style={{color:p.color}}>{p.glyph}</span> {p.name}
+          </button>;
+        })}
+      </div>
+
+      {!proj?(
+        <EmptyState th={th} text="选择一个项目" icon="folder"/>
+      ):data.empty?(
+        <EmptyState th={th} text={`「${proj.name}」还没有任务`} icon="check"/>
+      ):(()=>{
+        const{points,total,totalDays}=data;
+        const W=600,H=280,PAD={t:30,r:30,b:40,l:46};
+        const innerW=W-PAD.l-PAD.r,innerH=H-PAD.t-PAD.b;
+        const xStep=innerW/(totalDays-1);
+        const yScale=v=>PAD.t+innerH-(v/total)*innerH;
+        const xScale=i=>PAD.l+i*xStep;
+        const idealPath=points.map((p,i)=>`${i===0?"M":"L"} ${xScale(i)} ${yScale(p.ideal)}`).join(" ");
+        const realPath=points.map((p,i)=>`${i===0?"M":"L"} ${xScale(i)} ${yScale(p.remaining)}`).join(" ");
+        const realArea=points.map((p,i)=>`${i===0?"M":"L"} ${xScale(i)} ${yScale(p.remaining)}`).join(" ")+` L ${xScale(totalDays-1)} ${PAD.t+innerH} L ${xScale(0)} ${PAD.t+innerH} Z`;
+        const lastPoint=points[points.length-1];
+        const remaining=lastPoint.remaining;
+        const completed=total-remaining;
+        const onSchedule=remaining<=lastPoint.ideal;
+        const projTasks=tasks.filter(t=>t.projectId===proj.id);
+        return(
+          <>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:10,marginBottom:14}}>
+              <StatCard th={th} label="总任务" value={total} sub="项" color={proj.color}/>
+              <StatCard th={th} label="已完成" value={completed} sub={`${Math.round(completed/total*100)}%`} color="#10d9a3"/>
+              <StatCard th={th} label="剩余" value={remaining} sub="项" color={remaining===0?"#10d9a3":th.accent3}/>
+              <StatCard th={th} label="进度" value={onSchedule?"领先":"滞后"} sub={`vs 理想线`} color={onSchedule?"#10d9a3":"#ff5d7a"}/>
+            </div>
+            <div className="glass" style={{padding:"18px 14px",borderRadius:14,overflowX:"auto"}}>
+              <div className="mono" style={{fontSize:10,letterSpacing:"0.18em",color:th.ink3,marginBottom:8,fontWeight:600,paddingLeft:14}}>燃尽曲线 · {totalDays} 天</div>
+              <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",minWidth:520,height:"auto",display:"block"}}>
+                {/* 横轴网格 */}
+                {[0,0.25,0.5,0.75,1].map(p=>(
+                  <line key={p} x1={PAD.l} x2={PAD.l+innerW} y1={PAD.t+innerH*p} y2={PAD.t+innerH*p} stroke={th.glassBorder} strokeWidth="1" strokeDasharray="2,3"/>
+                ))}
+                {/* Y 轴标签 */}
+                {[0,0.5,1].map(p=>(
+                  <text key={p} x={PAD.l-8} y={PAD.t+innerH*(1-p)+4} fill={th.ink3} fontSize="10" textAnchor="end" fontFamily="monospace">{Math.round(total*p)}</text>
+                ))}
+                {/* X 轴标签 */}
+                {points.filter((_,i)=>i===0||i===totalDays-1||i===Math.floor(totalDays/2)).map((p,i,arr)=>{
+                  const idx=points.indexOf(p);
+                  return<text key={idx} x={xScale(idx)} y={PAD.t+innerH+18} fill={th.ink3} fontSize="9" textAnchor="middle" fontFamily="monospace">{p.date.slice(5)}</text>;
+                })}
+                {/* 理想线 */}
+                <path d={idealPath} fill="none" stroke={th.ink3} strokeWidth="1.5" strokeDasharray="4,4" opacity="0.5"/>
+                {/* 实际填充 */}
+                <path d={realArea} fill={proj.color} opacity="0.15"/>
+                {/* 实际线 */}
+                <path d={realPath} fill="none" stroke={proj.color} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round"/>
+                {/* 数据点 */}
+                {points.map((p,i)=>(
+                  <circle key={i} cx={xScale(i)} cy={yScale(p.remaining)} r={i===points.length-1?5:3} fill={proj.color} stroke={th.bg1} strokeWidth="1.5">
+                    <title>{p.date} · 剩余 {p.remaining} · 已完成 {p.done}</title>
+                  </circle>
+                ))}
+                {/* 图例 */}
+                <g transform={`translate(${PAD.l+8},${PAD.t-8})`}>
+                  <line x1="0" x2="14" y1="0" y2="0" stroke={proj.color} strokeWidth="2.5"/>
+                  <text x="20" y="3" fill={th.ink2} fontSize="10" fontFamily="monospace">实际</text>
+                  <line x1="60" x2="74" y1="0" y2="0" stroke={th.ink3} strokeWidth="1.5" strokeDasharray="3,3"/>
+                  <text x="80" y="3" fill={th.ink3} fontSize="10" fontFamily="monospace">理想</text>
+                </g>
+              </svg>
+            </div>
+            <div style={{marginTop:10,padding:"10px 14px",background:th.glass1,borderRadius:10,fontSize:11,color:th.ink2,lineHeight:1.65}}>
+              {onSchedule?`✓ 进度 ${onSchedule?"领先":"符合"}理想节奏`:`⚠ 当前剩余 ${remaining} 项，比理想线多 ${remaining-lastPoint.ideal} 项`}
+              {projTasks.filter(t=>t.due&&t.due<today&&!t.done).length>0&&` · ${projTasks.filter(t=>t.due&&t.due<today&&!t.done).length} 项已逾期`}
+            </div>
+          </>
+        );
+      })()}
+    </div>
+  );
+}
+
+// ═══ 4. 类目耗时分析 ═══
+function CategoryTimeAnalysis({th,tasks,history,cats,catOf,today}){
+  const[range,setRange]=useState("30");
+  const data=useMemo(()=>{
+    const cutoff=range==="all"?"":addDays(today,-parseInt(range));
+    // 收集每个分类的耗时
+    const byCat={};
+    cats.forEach(c=>{byCat[c.id]={cat:c,planned:0,actual:0,done:0,total:0};});
+    const considered=[];
+    tasks.forEach(t=>{
+      if(cutoff&&(t.completedAt||t.createdAt||"")<cutoff)return;
+      considered.push(t);
+    });
+    considered.forEach(t=>{
+      const k=t.category;if(!byCat[k])byCat[k]={cat:catOf(k),planned:0,actual:0,done:0,total:0};
+      byCat[k].total+=1;
+      if(t.done)byCat[k].done+=1;
+      byCat[k].planned+=parseInt(t.duration||"0",10)||0;
+      byCat[k].actual+=t.actualMin||0;
+    });
+    const arr=Object.values(byCat).filter(x=>x.total>0).sort((a,b)=>b.actual-a.actual);
+    const totalActual=arr.reduce((s,x)=>s+x.actual,0);
+    const totalPlanned=arr.reduce((s,x)=>s+x.planned,0);
+    return{arr,totalActual,totalPlanned};
+  },[tasks,cats,catOf,range,today]);
+
+  const{arr,totalActual,totalPlanned}=data;
+  // 饼图分段
+  const pieR=70,pieCx=85,pieCy=85;
+  let acc=0;
+  const slices=arr.map((x,i)=>{
+    if(totalActual===0||x.actual===0)return null;
+    const start=acc/totalActual*Math.PI*2-Math.PI/2;
+    acc+=x.actual;
+    const end=acc/totalActual*Math.PI*2-Math.PI/2;
+    const x1=pieCx+pieR*Math.cos(start),y1=pieCy+pieR*Math.sin(start);
+    const x2=pieCx+pieR*Math.cos(end),y2=pieCy+pieR*Math.sin(end);
+    const largeArc=(end-start)>Math.PI?1:0;
+    const path=`M ${pieCx} ${pieCy} L ${x1} ${y1} A ${pieR} ${pieR} 0 ${largeArc} 1 ${x2} ${y2} Z`;
+    return{path,color:x.cat.color,name:x.cat.name,actual:x.actual,pct:Math.round(x.actual/totalActual*100)};
+  }).filter(Boolean);
+
+  return(
+    <div className="fadeIn">
+      <div style={{display:"flex",gap:6,overflowX:"auto",marginBottom:16,paddingBottom:4}} className="slim-scroll">
+        {[["7","近 7 天"],["30","近 30 天"],["90","近 90 天"],["all","全部"]].map(([k,l])=>(
+          <button key={k} onClick={()=>setRange(k)} className={`view-tab ${range===k?"active":""}`} style={{flexShrink:0}}>{l}</button>
+        ))}
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:10,marginBottom:16}}>
+        <StatCard th={th} label="实际耗时" value={fmtMin(totalActual)||"—"} sub="累计" color={th.accent}/>
+        <StatCard th={th} label="预计耗时" value={fmtMin(totalPlanned)||"—"} sub="计划" color={th.accent2}/>
+        <StatCard th={th} label="参与分类" value={arr.length} sub={`/${cats.length}`} color={th.accent3}/>
+      </div>
+
+      {arr.length===0||totalActual===0?(
+        <EmptyState th={th} text="该时间范围内没有耗时记录 · 完成任务时记录实际用时即可分析" icon="clock"/>
+      ):(
+        <div className="glass" style={{padding:18,borderRadius:14,marginBottom:14}}>
+          <div className="mono" style={{fontSize:10,letterSpacing:"0.18em",color:th.ink3,marginBottom:14,fontWeight:600}}>类目耗时占比</div>
+          <div style={{display:"flex",gap:24,flexWrap:"wrap",alignItems:"center"}}>
+            {/* 饼图 */}
+            <svg viewBox="0 0 170 170" style={{width:170,height:170,flexShrink:0}}>
+              {slices.map((s,i)=>(
+                <path key={i} d={s.path} fill={s.color} stroke={th.bg1} strokeWidth="1.5" opacity="0.92">
+                  <title>{s.name} · {fmtMin(s.actual)} · {s.pct}%</title>
+                </path>
+              ))}
+              <circle cx={pieCx} cy={pieCy} r="32" fill={th.bg1}/>
+              <text x={pieCx} y={pieCy-2} fill={th.ink0} fontSize="11" textAnchor="middle" fontFamily="serif" fontStyle="italic">{fmtMin(totalActual)}</text>
+              <text x={pieCx} y={pieCy+12} fill={th.ink3} fontSize="8" textAnchor="middle" fontFamily="monospace" letterSpacing="0.1em">TOTAL</text>
+            </svg>
+            {/* 列表 */}
+            <div style={{flex:1,minWidth:200,display:"flex",flexDirection:"column",gap:8}}>
+              {arr.map(x=>{
+                const pct=totalActual>0?(x.actual/totalActual)*100:0;
+                const overrun=x.planned>0&&x.actual>x.planned;
+                return(
+                  <div key={x.cat.id||x.cat.name} style={{display:"flex",alignItems:"center",gap:10}}>
+                    <span style={{fontSize:13,color:x.cat.color,minWidth:18}}>{x.cat.glyph}</span>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{display:"flex",alignItems:"baseline",gap:6,marginBottom:3}}>
+                        <span style={{fontSize:13,color:th.ink1,fontWeight:500}}>{x.cat.name}</span>
+                        <span className="mono tnum" style={{fontSize:10,color:th.ink3,marginLeft:"auto"}}>{x.done}/{x.total}</span>
+                        <span className="mono tnum" style={{fontSize:11,color:th.ink0,fontWeight:600,minWidth:48,textAlign:"right"}}>{fmtMin(x.actual)}</span>
+                      </div>
+                      <div style={{height:5,borderRadius:3,background:th.glass2,overflow:"hidden",position:"relative"}}>
+                        <div style={{width:`${pct}%`,height:"100%",background:`linear-gradient(90deg,${x.cat.color},${x.cat.color}aa)`,boxShadow:`0 0 6px ${x.cat.color}80`}}/>
+                      </div>
+                      {x.planned>0&&(
+                        <div className="mono" style={{fontSize:9,color:overrun?"#ff5d7a":th.ink3,marginTop:3,letterSpacing:"0.04em"}}>
+                          预计 {fmtMin(x.planned)} → 实际 {fmtMin(x.actual)} {overrun?`· 超出 ${fmtMin(x.actual-x.planned)}`:`· 节省 ${fmtMin(x.planned-x.actual)}`}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -3213,7 +3978,7 @@ function AllHistory({th,tasks,history,catOf,today}){
 }
 
 // ═══ SETTINGS ═══
-function Settings({th,themeId,setThemeId,cats,setCats,projects,setProjects,tasks,history,setTasks,setHistory,trash,restoreTask,purgeTask,emptyTrash,onClose,user,onSignOut,notifPerm,askNotif,installPWA,installState,today,showToast,catOf}){
+function Settings({th,themeId,setThemeId,cats,setCats,projects,setProjects,tasks,history,setTasks,setHistory,trash,restoreTask,purgeTask,emptyTrash,tags,addTag,updateTag,removeTag,onClose,user,onSignOut,notifPerm,askNotif,installPWA,installState,today,showToast,catOf}){
   const[tab,setTab]=useState("appearance");
   const exportJSON=()=>{const data={tasks,history,cats,projects,exportedAt:todayStr()};const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=`timelinek-${todayStr()}.json`;a.click();URL.revokeObjectURL(url);showToast("已导出","success");};
   const exportXLSX=()=>{
@@ -3254,7 +4019,7 @@ function Settings({th,themeId,setThemeId,cats,setCats,projects,setProjects,tasks
           <button onClick={onClose} style={{width:34,height:34,borderRadius:10,background:th.glass2,display:"flex",alignItems:"center",justifyContent:"center"}}><Ic n="close" size={14} color={th.ink2}/></button>
         </div>
         <div style={{padding:"10px 16px",display:"flex",gap:4,overflowX:"auto",borderBottom:`1px solid ${th.glassBorder}`}} className="slim-scroll">
-          {[["appearance","外观","palette"],["account","账户","user"],["categories","分类","layers"],["trash",`回收站${trash&&trash.length?` · ${trash.length}`:""}`,"trash"],["data","数据","download"],["about","关于","info"]].map(([k,l,ic])=>(
+          {[["appearance","外观","palette"],["account","账户","user"],["categories","分类","layers"],["tags",`标签${tags&&tags.length?` · ${tags.length}`:""}`,"hash"],["trash",`回收站${trash&&trash.length?` · ${trash.length}`:""}`,"trash"],["data","数据","download"],["about","关于","info"]].map(([k,l,ic])=>(
             <button key={k} onClick={()=>setTab(k)} className={`view-tab ${tab===k?"active":""}`} style={{flexShrink:0}}>
               <Ic n={ic} size={11} color={tab===k?"#fff":th.ink2}/> {l}
             </button>
@@ -3335,6 +4100,40 @@ function Settings({th,themeId,setThemeId,cats,setCats,projects,setProjects,tasks
                 </div>
               ))}
               <button onClick={()=>{const name=prompt("分类名称");if(!name)return;const glyph=prompt("图标（一个字符）","◆")||"◆";setCats([...cats,{id:"custom"+Date.now(),name,color:"#a8a2c4",glyph:glyph.slice(0,2)}]);}} className="glass" style={{padding:"11px 14px",borderRadius:11,color:th.ink2,fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:6,border:`1px dashed ${th.glassBorder}`}}><Ic n="plus" size={12}/> 添加分类</button>
+            </div>
+          )}
+
+          {tab==="tags"&&(
+            <div>
+              <div style={{marginBottom:14}}>
+                <div className="mono" style={{fontSize:11,letterSpacing:"0.18em",color:th.ink3,marginBottom:4,fontWeight:600}}>TAGS · {(tags||[]).length}</div>
+                <div style={{fontSize:11,color:th.ink3,lineHeight:1.6}}>标签是分类之外的灵活归类方式 · 一个任务可以挂多个标签</div>
+              </div>
+              <div style={{display:"flex",gap:6,marginBottom:16}}>
+                <input id="tagNewName" placeholder="新建标签…" className="inp" style={{padding:"8px 12px",fontSize:12,flex:1}} onKeyDown={e=>{if(e.isComposing||e.keyCode===229)return;if(e.key==="Enter"){const v=e.target.value;if(v.trim()){addTag(v,TAG_COLORS[(tags||[]).length%TAG_COLORS.length]);e.target.value="";}}}}/>
+                <button onClick={()=>{const el=document.getElementById("tagNewName");const v=el.value;if(v.trim()){addTag(v,TAG_COLORS[(tags||[]).length%TAG_COLORS.length]);el.value="";el.focus();}}} style={{padding:"8px 14px",borderRadius:9,background:`linear-gradient(135deg,${th.accent},${th.accent3})`,color:"#fff",fontSize:12,fontWeight:600}}>+ 添加</button>
+              </div>
+              {(!tags||tags.length===0)?(
+                <EmptyState th={th} text="还没有标签 · 在上方输入框创建" icon="hash"/>
+              ):(
+                <div className="slim-scroll" style={{display:"flex",flexDirection:"column",gap:5,maxHeight:"45vh",overflowY:"auto"}}>
+                  {tags.map(tg=>{
+                    const taskN=tasks.filter(t=>(t.tagIds||[]).includes(tg.id)).length;
+                    return(
+                      <div key={tg.id} className="glass" style={{padding:"10px 12px",borderRadius:9,borderLeft:`3px solid ${tg.color}`,display:"flex",alignItems:"center",gap:10}}>
+                        <input value={tg.name} onChange={e=>updateTag(tg.id,{name:e.target.value})} style={{background:"transparent",border:"none",outline:"none",fontSize:13,color:th.ink0,flex:1,fontWeight:500}}/>
+                        <div style={{display:"flex",gap:3}}>
+                          {TAG_COLORS.map(co=>(
+                            <button key={co} onClick={()=>updateTag(tg.id,{color:co})} title={co} style={{width:18,height:18,borderRadius:5,background:co,border:tg.color===co?"2px solid #fff":"2px solid transparent",boxShadow:tg.color===co?`0 0 0 1px ${co}`:"none",cursor:"pointer"}}/>
+                          ))}
+                        </div>
+                        <span className="mono tnum" style={{fontSize:10,color:th.ink3,minWidth:30,textAlign:"right"}}>{taskN}</span>
+                        <button onClick={()=>{if(confirm(`删除标签「${tg.name}」？已使用此标签的 ${taskN} 个任务会取消该标签`))removeTag(tg.id);}} title="删除" style={{width:26,height:26,borderRadius:7,background:th.glass2,display:"flex",alignItems:"center",justifyContent:"center"}}><Ic n="trash" size={11} color={th.ink3}/></button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 

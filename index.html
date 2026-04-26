@@ -522,7 +522,7 @@ ${projNames?`正在进行的项目：${projNames}\n`:""}
 - duration: 预计分钟数（数字）。"1小时半"=90，"2小时"=120。无则空
 - priority: 优先级 "高" / "中" / "低"。包含"重要/紧急/紧迫"=高，"可选/有空/不急"=低，其他=中
 - category: 从可用分类中**选一个最匹配**的分类名。如"开会/汇报/工作"→工作，"看书/学习"→学习，"聚餐/购物"→生活
-- project: 如果输入暗示某个进行中项目，返回项目名。否则空
+- project: **只在输入文本明确提到项目名或项目关键词时才填**。例如输入"创界冰淇淋杯样品制作"才挂"创界冰淇淋杯定制项目"。普通生活/学习任务（如"去公园"、"看书"、"运动"）即使日期落在某项目周期内也**绝对不要**归项目，留空字符串。
 - content: 备注信息（如"@王总"、"在咖啡店"），无则空
 
 只返回 JSON，不要 markdown 包裹：
@@ -1516,19 +1516,21 @@ function MainApp({user}){
         const c=cats.find(x=>x.name===parsed.category);
         if(c)catId=c.id;
       }
-      // 项目名映射回 id
+      // 项目名映射回 id —— 严格校验：AI 给的项目名必须出现在原文里，否则忽略
       let projId="";
       if(parsed.project&&Array.isArray(projects)){
         const p=projects.find(x=>x.name===parsed.project);
-        if(p)projId=p.id;
+        if(p){
+          // 校验：项目名（或其主要关键词，去掉"项目""定制"等通用词）出现在原文
+          const cleanName=p.name.replace(/项目|定制|计划|方案|工程/g,"").trim();
+          const lowerText=(text||"").toLowerCase();
+          const matched=lowerText.includes(p.name.toLowerCase())||(cleanName.length>=2&&lowerText.includes(cleanName.toLowerCase()));
+          if(matched)projId=p.id;
+          // 否则忽略 AI 的项目判断
+        }
       }
       const finalDue=parsed.due||fallbackDue||today;
-      // 自动归属活跃项目（如果 AI 没指定 project 且任务的 due 在项目周期内）
-      try{
-        if(!projId&&activeProject&&activeProject.startDate&&activeProject.endDate&&finalDue>=activeProject.startDate&&finalDue<=activeProject.endDate){
-          projId=activeProject.id;
-        }
-      }catch{}
+      // 仅当 AI 显式解析出 project 时才归属（去掉粗暴的"周期内自动归属"，避免误归）
       const newTask={
         id:Date.now(),
         ...emptyTask,
@@ -1963,11 +1965,6 @@ function MainApp({user}){
     const parsed=parseNL(quickTitle,today);
     const baseDue=parsed.due||dueDate||today;
     const finalTitle=parsed.title||quickTitle.trim();
-    // 自动归属活跃项目（如果任务的 due 在项目周期内）
-    let autoProj="";
-    if(activeProject&&baseDue>=activeProject.startDate&&baseDue<=activeProject.endDate){
-      autoProj=activeProject.id;
-    }
     const newTask={
       id:Date.now(),
       ...emptyTask,
@@ -1977,7 +1974,6 @@ function MainApp({user}){
       timeEnd:parsed.timeEnd||"",
       duration:parsed.duration||"",
       priority:parsed.priority||"中",
-      projectId:autoProj,
       sortKey:nextSortKey(),
       createdAt:today,
       done:false
@@ -1988,7 +1984,6 @@ function MainApp({user}){
     if(parsed.due&&parsed.due!==today)detected.push(parsed.due===addDays(today,1)?"明天":parsed.due);
     if(parsed.timeStart)detected.push(parsed.timeStart);
     if(parsed.duration)detected.push(parsed.duration+"min");
-    if(autoProj)detected.push("→ "+activeProject.name);
     showToast(detected.length?`已添加 · ${detected.join(" · ")}`:"已添加","success");
   };
   const addOrEditTask=()=>{
@@ -2209,7 +2204,7 @@ function MainApp({user}){
 
   // 分发给各 view 的 props
   const vp={
-    th,tasks,searchedTasks,filtered,filter,setFilter,filterDone,setFilterDone,cats,catOf,projects,projOf,
+    th,tasks,setTasks,searchedTasks,filtered,filter,setFilter,filterDone,setFilterDone,cats,catOf,projects,projOf,
     today,nowMin,quickTitle,setQuickTitle,quickAdd,
     toggleTask,updateProgress,removeTask,startEdit,toggleTimer,poppingId,runningId,
     expanded,setExpanded,
@@ -2931,7 +2926,17 @@ function AssistantView({th,tasks,setTasks,projects,cats,catOf,tags,journals,toda
       try{
         const dueOk=args.due||today;
         let projId=args.projectId||"";
-        if(projId&&!projects.find(p=>p.id===projId))projId="";
+        // 校验项目：AI 传的 projectId 必须真实存在 + 项目名/关键词必须出现在 title 里
+        if(projId){
+          const p=projects.find(x=>x.id===projId);
+          if(!p)projId="";
+          else{
+            const cleanName=p.name.replace(/项目|定制|计划|方案|工程/g,"").trim();
+            const t=(args.title||"").toLowerCase();
+            const matched=t.includes(p.name.toLowerCase())||(cleanName.length>=2&&t.includes(cleanName.toLowerCase()));
+            if(!matched)projId=""; // 标题里没提到项目名 → 不归属
+          }
+        }
         // 分类：先按 id 匹配，再按 name 匹配（AI 可能传中文名）
         let catId="work";
         if(args.category){
@@ -4617,7 +4622,7 @@ function ProjectForm({th,projects,editProjectId,onSave,onCancel}){
         <textarea value={form.description||""} onChange={e=>setF("description",e.target.value)} placeholder="简介（可选）" rows={2} className="inp" style={{marginBottom:16,resize:"vertical"}}/>
         
         {/* 项目周期 */}
-        <label className="mono" style={{display:"block",fontSize:10,color:th.ink3,marginBottom:8,letterSpacing:"0.15em",fontWeight:600}}>项目周期（可选）· 期间新建任务自动归属此项目</label>
+        <label className="mono" style={{display:"block",fontSize:10,color:th.ink3,marginBottom:8,letterSpacing:"0.15em",fontWeight:600}}>项目周期（可选）· 用于逾期判断 + 进度展示</label>
         <div style={{display:"flex",gap:8,marginBottom:6,alignItems:"center"}}>
           <input type="date" value={form.startDate||""} onChange={e=>setF("startDate",e.target.value)} className="inp" style={{flex:1,fontSize:13,padding:"10px 12px"}}/>
           <span style={{color:th.ink3,fontSize:14}}>→</span>

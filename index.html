@@ -277,6 +277,42 @@ const THEMES=[
     shadow:"0 2px 8px rgba(60,50,30,0.06),0 12px 32px rgba(60,50,30,0.09)",
     shadowLg:"0 4px 12px rgba(60,50,30,0.08),0 20px 50px rgba(60,50,30,0.14)",
   },
+  {
+    id:"matrix",name:"Neon Matrix",sub:"荧光绿 · 赛博暗夜",isDark:true,
+    bg0:"#020806",bg1:"#051410",bg2:"#082218",bg3:"#0c2e22",
+    ink0:"#ecfff6",ink1:"#bdf5d8",ink2:"#6ec99a",ink3:"#3a8064",
+    accent:"#10d9a3",accent2:"#86efac",accent3:"#22d3ee",accentText:"#02110a",
+    glass1:"rgba(16,217,163,0.05)",glass2:"rgba(16,217,163,0.08)",glass3:"rgba(16,217,163,0.12)",
+    glassBorder:"rgba(16,217,163,0.14)",glassBorderStrong:"rgba(16,217,163,0.22)",
+    gridC:"rgba(16,217,163,0.04)",
+    orbA:"#10d9a3",orbB:"#22d3ee",orbC:"#86efac",
+    shadow:"0 8px 32px rgba(2,40,28,0.6),inset 0 1px 0 rgba(134,239,172,0.08)",
+    shadowLg:"0 24px 60px rgba(0,0,0,0.5),0 0 30px rgba(16,217,163,0.15)",
+  },
+  {
+    id:"sky",name:"Sky Drift",sub:"天空蓝 · 流云清透",isDark:true,
+    bg0:"#040814",bg1:"#0a1325",bg2:"#101e3a",bg3:"#162a52",
+    ink0:"#f0f7ff",ink1:"#cfe1f8",ink2:"#7ba6d8",ink3:"#4670a0",
+    accent:"#3b9eff",accent2:"#7cc5ff",accent3:"#a5b4fc",accentText:"#ffffff",
+    glass1:"rgba(135,200,255,0.04)",glass2:"rgba(135,200,255,0.07)",glass3:"rgba(135,200,255,0.11)",
+    glassBorder:"rgba(135,200,255,0.12)",glassBorderStrong:"rgba(135,200,255,0.20)",
+    gridC:"rgba(135,200,255,0.04)",
+    orbA:"#3b9eff",orbB:"#a5b4fc",orbC:"#7cc5ff",
+    shadow:"0 8px 32px rgba(8,18,48,0.6),inset 0 1px 0 rgba(125,180,255,0.08)",
+    shadowLg:"0 24px 60px rgba(0,0,0,0.5),0 0 30px rgba(59,158,255,0.15)",
+  },
+  {
+    id:"rose",name:"Rose Bloom",sub:"玫瑰粉 · 落英缤纷",isDark:false,
+    bg0:"#fdf2f5",bg1:"#fef6f8",bg2:"#fffafb",bg3:"#ffffff",
+    ink0:"#3a0f1c",ink1:"#5a1f30",ink2:"#9b6678",ink3:"#c89aaa",
+    accent:"#ec4899",accent2:"#f9a8d4",accent3:"#a855f7",accentText:"#ffffff",
+    glass1:"rgba(255,255,255,0.6)",glass2:"rgba(255,255,255,0.78)",glass3:"rgba(255,255,255,0.9)",
+    glassBorder:"rgba(236,72,153,0.12)",glassBorderStrong:"rgba(236,72,153,0.22)",
+    gridC:"rgba(236,72,153,0.05)",
+    orbA:"#f9a8d4",orbB:"#c4b5fd",orbC:"#fde68a",
+    shadow:"0 2px 8px rgba(236,72,153,0.08),0 12px 32px rgba(236,72,153,0.1)",
+    shadowLg:"0 4px 12px rgba(236,72,153,0.1),0 20px 50px rgba(236,72,153,0.16)",
+  },
 ];
 
 const TEMPLATES=[
@@ -307,6 +343,77 @@ function addDays(ds,n){const d=new Date(ds);d.setDate(d.getDate()+n);return date
 function calcMin(s,e){try{const[sh,sm]=s.split(":").map(Number),[eh,em]=e.split(":").map(Number);const d=(eh*60+em)-(sh*60+sm);return d>0?d:null;}catch{return null;}}
 function timeToMin(t){try{const[h,m]=t.split(":").map(Number);return h*60+m;}catch{return null;}}
 function fmtMin(m){if(m==null||isNaN(m))return"";m=Math.round(m);if(m<60)return m+"min";const h=Math.floor(m/60),r=m%60;return h+"h"+(r?r+"m":"");}
+
+// ═══ NATURAL LANGUAGE PARSER ═══
+// 解析"明天下午 3 点开会 30 分钟" → {title:"开会", due:tomorrow, timeStart:"15:00", duration:30}
+function parseNL(text,today){
+  if(!text||!text.trim())return{title:""};
+  let s=" "+text.trim()+" "; // 加空格便于边界匹配
+  const r={title:"",due:"",timeStart:"",timeEnd:"",duration:"",priority:"",category:""};
+  const mm=(re,cb)=>{const m=s.match(re);if(m){cb(m);s=s.replace(m[0]," ");}};
+
+  // 日期：今天/明天/后天/N 天后/M 月 D 日/周一-周日
+  mm(/\s今[天日]\s/,()=>{r.due=today;});
+  mm(/\s明[天日]\s/,()=>{const d=new Date(today);d.setDate(d.getDate()+1);r.due=d.toISOString().slice(0,10);});
+  mm(/\s后[天日]\s/,()=>{const d=new Date(today);d.setDate(d.getDate()+2);r.due=d.toISOString().slice(0,10);});
+  mm(/\s大后[天日]\s/,()=>{const d=new Date(today);d.setDate(d.getDate()+3);r.due=d.toISOString().slice(0,10);});
+  mm(/\s(\d+)\s*天[后内]\s/,m=>{const d=new Date(today);d.setDate(d.getDate()+parseInt(m[1]));r.due=d.toISOString().slice(0,10);});
+  mm(/\s(?:下\s*)?(?:周|星期|礼拜)\s*([一二三四五六日天])\s/,m=>{
+    const map={"一":1,"二":2,"三":3,"四":4,"五":5,"六":6,"日":0,"天":0};
+    const target=map[m[1]];const d=new Date(today);const cur=d.getDay();
+    let diff=target-cur;if(diff<=0)diff+=7;d.setDate(d.getDate()+diff);
+    r.due=d.toISOString().slice(0,10);
+  });
+  mm(/\s(\d{1,2})[月\/\-](\d{1,2})[日号]?\s/,m=>{
+    const y=new Date(today).getFullYear();
+    r.due=`${y}-${String(m[1]).padStart(2,"0")}-${String(m[2]).padStart(2,"0")}`;
+  });
+
+  // 时长："30 分钟" / "1 小时" / "1.5 小时" / "半小时"
+  mm(/\s半\s*小?时\s/,()=>{r.duration="30";});
+  mm(/\s(\d+(?:\.\d+)?)\s*(?:小时|h|hr)\s/i,m=>{r.duration=String(Math.round(parseFloat(m[1])*60));});
+  mm(/\s(\d+)\s*(?:分钟|分|min)\s/,m=>{r.duration=m[1];});
+
+  // 时间："下午3点" / "上午9点" / "晚上8点半" / "15:00" / "15点" / "15点30"
+  let amPm=null;
+  if(/\s上午\s|\s早[上晨]\s|\sam\s/i.test(s)){amPm="am";s=s.replace(/\s(上午|早[上晨]|am)\s/i," ");}
+  if(/\s下午\s|\s中午\s|\s晚上\s|\s夜里\s|\spm\s/i.test(s)){amPm="pm";s=s.replace(/\s(下午|中午|晚上|夜里|pm)\s/i," ");}
+  mm(/\s(\d{1,2}):(\d{2})\s/,m=>{
+    let h=parseInt(m[1]);const min=parseInt(m[2]);
+    if(amPm==="pm"&&h<12)h+=12;
+    if(amPm==="am"&&h===12)h=0;
+    r.timeStart=`${String(h).padStart(2,"0")}:${String(min).padStart(2,"0")}`;
+  });
+  if(!r.timeStart){
+    mm(/\s(\d{1,2})\s*[点时](\d{1,2}|半)?\s*(?:分)?\s/,m=>{
+      let h=parseInt(m[1]);
+      let min=0;
+      if(m[2]==="半")min=30;
+      else if(m[2])min=parseInt(m[2]);
+      if(amPm==="pm"&&h<12)h+=12;
+      if(amPm==="am"&&h===12)h=0;
+      r.timeStart=`${String(h).padStart(2,"0")}:${String(min).padStart(2,"0")}`;
+    });
+  }
+
+  // 如果有时长 + 开始时间，算结束时间
+  if(r.timeStart&&r.duration){
+    const[h,m]=r.timeStart.split(":").map(Number);
+    const total=h*60+m+parseInt(r.duration);
+    if(total<24*60){
+      const eh=Math.floor(total/60),em=total%60;
+      r.timeEnd=`${String(eh).padStart(2,"0")}:${String(em).padStart(2,"0")}`;
+    }
+  }
+
+  // 优先级关键字
+  mm(/\s[!！]+\s/,m=>{r.priority=m[0].includes("!!")?"高":"中";});
+  if(/\s重要|\s紧急|\s高优先?\s|\sP1\s|\sP0\s/.test(s)){r.priority="高";s=s.replace(/\s(重要|紧急|高优先?|P[01])\s/g," ");}
+
+  // 标题：剩余的所有非空白内容
+  r.title=s.replace(/\s+/g," ").trim();
+  return r;
+}
 function curMin(){const d=new Date();return d.getHours()*60+d.getMinutes();}
 function getGreeting(){const h=new Date().getHours();return GREETINGS.find(g=>h>=g.range[0]&&h<g.range[1])||GREETINGS[0];}
 function weekdayCN(date){const d=new Date(date);return["周日","周一","周二","周三","周四","周五","周六"][d.getDay()];}
@@ -326,7 +433,7 @@ const emptyTask={title:"",content:"",category:"work",priority:"中",due:"",timeS
 // ═══ CLOUD SYNC ═══
 async function cloudLoad(userId){try{const{data,error}=await supabase.from("user_data").select("*").eq("user_id",userId).maybeSingle();if(error)throw error;return data;}catch(e){return null;}}
 async function cloudSave(userId,p){
-  const base={user_id:userId,tasks:p.tasks||[],history:p.history||[],cats:p.cats||DEFAULT_CATEGORIES,theme_id:p.themeId||"aurora",updated_at:new Date().toISOString()};
+  const base={user_id:userId,tasks:p.tasks||[],history:p.history||[],cats:p.cats||DEFAULT_CATEGORIES,trash:p.trash||[],theme_id:p.themeId||"aurora",updated_at:new Date().toISOString()};
   try{
     const{error}=await supabase.from("user_data").upsert({...base,projects:p.projects||[]},{onConflict:"user_id"});
     if(!error)return{ok:true,partial:false};
@@ -556,10 +663,50 @@ function MainApp({user}){
   const[history,setHistory]=useState([]);
   const[cats,setCats]=useState(DEFAULT_CATEGORIES);
   const[projects,setProjects]=useState(DEFAULT_PROJECTS);
+  const[trash,setTrash]=useState([]); // 回收站，30 天后自动清
+  const[selectedIds,setSelectedIds]=useState(new Set()); // 多选 id 集合
+  const inSelectMode=selectedIds.size>0;
+  const toggleSelect=id=>{
+    setSelectedIds(prev=>{
+      const next=new Set(prev);
+      if(next.has(id))next.delete(id);else next.add(id);
+      return next;
+    });
+  };
+  const clearSelect=()=>setSelectedIds(new Set());
+  const bulkRemove=()=>{
+    if(selectedIds.size===0)return;
+    if(!confirm(`确定删除选中的 ${selectedIds.size} 条任务？（可在回收站恢复）`))return;
+    const ids=[...selectedIds];
+    const items=tasks.filter(t=>ids.includes(t.id));
+    setTasks(t=>t.filter(tk=>!ids.includes(tk.id)));
+    setTrash(tr=>[...tr,...items.map(it=>({...it,deletedAt:Date.now()}))]);
+    if(ids.includes(runningId)){setRunningId(null);setRunningStartTs(null);setRunningAccumMin(0);clearTimerState();}
+    clearSelect();showToast(`已删除 ${ids.length} 项`,"success");
+  };
+  const bulkSetCategory=catId=>{
+    if(selectedIds.size===0)return;
+    const ids=[...selectedIds];
+    setTasks(t=>t.map(tk=>ids.includes(tk.id)?{...tk,category:catId}:tk));
+    clearSelect();showToast(`已修改分类`,"success");
+  };
+  const bulkSetDue=dateStr=>{
+    if(selectedIds.size===0)return;
+    const ids=[...selectedIds];
+    setTasks(t=>t.map(tk=>ids.includes(tk.id)?{...tk,due:dateStr}:tk));
+    clearSelect();showToast(`已修改日期`,"success");
+  };
+  const bulkComplete=()=>{
+    if(selectedIds.size===0)return;
+    const ids=[...selectedIds];
+    setTasks(t=>t.map(tk=>ids.includes(tk.id)?{...tk,done:true,progress:1}:tk));
+    clearSelect();showToast(`已完成 ${ids.length} 项`,"success");
+  };
   const[filter,setFilter]=useState("all");
   const[filterDone,setFilterDone]=useState("all");
   const[schedFilter,setSchedFilter]=useState("today");
   const[projectFilter,setProjectFilter]=useState("all");
+  const[openProjectId,setOpenProjectId]=useState(null); // 切到 projects 视图时自动打开的项目 id
   const[quickTitle,setQuickTitle]=useState("");
   const[taskForm,setTaskForm]=useState(emptyTask);
   const[showTaskForm,setShowTaskForm]=useState(false);
@@ -647,6 +794,7 @@ function MainApp({user}){
           const cachedP=localCacheLoad()?.projects;
           setProjects(Array.isArray(cachedP)?cachedP:DEFAULT_PROJECTS);
         }
+        setTrash(Array.isArray(cloud.trash)?cloud.trash:(localCacheLoad()?.trash||[]));
         setThemeId(cloud.theme_id||"aurora");
         setSyncStatus("synced");
       }else{
@@ -656,6 +804,7 @@ function MainApp({user}){
           setHistory(cached.history||[]);
           setCats(cached.cats||DEFAULT_CATEGORIES);
           setProjects(cached.projects||DEFAULT_PROJECTS);
+          setTrash(cached.trash||[]);
           setThemeId(cached.themeId||"aurora");
         }else{
           setTasks([{id:Date.now(),...emptyTask,title:"欢迎使用 Timelinek 👋",content:"试试左侧 ⌘K 打开命令面板 · 或者直接在下面快速添加一条任务",category:"life",priority:"中",due:nowToday,done:false,createdAt:nowToday}]);
@@ -679,7 +828,7 @@ function MainApp({user}){
   const partialSyncRef=useRef(false); // 云端缺 projects 列时为 true，阻止 poll 用云端数据覆盖本地 projects
   useEffect(()=>{
     if(!loaded)return;
-    const payload={tasks,history:snapshot(tasks,history,today),cats,projects,themeId};
+    const payload={tasks,history:snapshot(tasks,history,today),cats,projects,trash,themeId};
     localCacheSave(payload);
     if(saveTimer.current)clearTimeout(saveTimer.current);
     saveTimer.current=setTimeout(async()=>{
@@ -690,7 +839,7 @@ function MainApp({user}){
       saveTimer.current=null;
     },800);
     return()=>{if(saveTimer.current){clearTimeout(saveTimer.current);saveTimer.current=null;}};
-  },[tasks,cats,projects,themeId,loaded,today,history,snapshot,user.id]);
+  },[tasks,cats,projects,trash,themeId,loaded,today,history,snapshot,user.id]);
 
   useEffect(()=>{
     if(!loaded)return;
@@ -710,6 +859,7 @@ function MainApp({user}){
           if(Array.isArray(cloud.projects)&&!partialSyncRef.current){
             setProjects(cloud.projects);
           }
+          if(Array.isArray(cloud.trash))setTrash(cloud.trash);
           setThemeId(cloud.theme_id||"aurora");
           showToast("已同步其他设备的更新","info");
         }
@@ -761,9 +911,29 @@ function MainApp({user}){
   // ═══ CRUD ═══
   const quickAdd=(dueDate)=>{
     if(!quickTitle.trim())return;
-    const d=dueDate||today;
-    setTasks(t=>[...t,{id:Date.now(),...emptyTask,title:quickTitle.trim(),due:d,createdAt:today,done:false}]);
-    setQuickTitle("");showToast("已添加","success");
+    const parsed=parseNL(quickTitle,today);
+    const baseDue=parsed.due||dueDate||today;
+    const finalTitle=parsed.title||quickTitle.trim();
+    const newTask={
+      id:Date.now(),
+      ...emptyTask,
+      title:finalTitle,
+      due:baseDue,
+      timeStart:parsed.timeStart||"",
+      timeEnd:parsed.timeEnd||"",
+      duration:parsed.duration||"",
+      priority:parsed.priority||"中",
+      createdAt:today,
+      done:false
+    };
+    setTasks(t=>[...t,newTask]);
+    setQuickTitle("");
+    // 给点反馈让用户知道 NLP 起作用了
+    const detected=[];
+    if(parsed.due&&parsed.due!==today)detected.push(parsed.due===addDays(today,1)?"明天":parsed.due);
+    if(parsed.timeStart)detected.push(parsed.timeStart);
+    if(parsed.duration)detected.push(parsed.duration+"min");
+    showToast(detected.length?`已添加 · ${detected.join(" · ")}`:"已添加","success");
   };
   const addOrEditTask=()=>{
     if(!taskForm.title.trim())return;
@@ -790,11 +960,37 @@ function MainApp({user}){
   const removeTask=id=>{
     const task=tasks.find(t=>t.id===id);if(!task)return;
     setTasks(t=>t.filter(tk=>tk.id!==id));
+    // 进回收站，30 天自动清
+    setTrash(tr=>[...tr,{...task,deletedAt:Date.now()}]);
     setUndo({task,time:Date.now()});
     if(runningId===id){setRunningId(null);setRunningStartTs(null);setRunningAccumMin(0);clearTimerState();}
   };
+  // 从回收站恢复
+  const restoreTask=tid=>{
+    const item=trash.find(t=>t.id===tid);if(!item)return;
+    const{deletedAt,...task}=item;
+    setTrash(tr=>tr.filter(t=>t.id!==tid));
+    setTasks(t=>[...t,task]);
+    showToast("已恢复","success");
+  };
+  // 永久删除单条
+  const purgeTask=tid=>{
+    setTrash(tr=>tr.filter(t=>t.id!==tid));
+    showToast("已永久删除","info");
+  };
+  // 清空回收站
+  const emptyTrash=()=>{
+    if(trash.length===0)return;
+    if(!confirm(`确定永久删除 ${trash.length} 条任务？此操作不可恢复`))return;
+    setTrash([]);showToast("回收站已清空","info");
+  };
   useEffect(()=>{if(undo){const t=setTimeout(()=>setUndo(null),5000);return()=>clearTimeout(t);}},[undo]);
-  const doUndo=()=>{if(!undo)return;setTasks(t=>[...t,undo.task]);setUndo(null);showToast("已恢复","info");};
+  const doUndo=()=>{
+    if(!undo)return;
+    setTasks(t=>[...t,undo.task]);
+    setTrash(tr=>tr.filter(x=>x.id!==undo.task.id));
+    setUndo(null);showToast("已恢复","info");
+  };
   const startEdit=task=>{
     setTaskForm({title:task.title,content:task.content||"",category:task.category,priority:task.priority,due:task.due||"",timeStart:task.timeStart||"",timeEnd:task.timeEnd||"",duration:task.duration||"",repeat:!!task.repeat,progress:task.progress||0,projectId:task.projectId||""});
     setEditTaskId(task.id);setShowTaskForm(true);
@@ -862,6 +1058,14 @@ function MainApp({user}){
     };
     window.addEventListener("keydown",h);return()=>window.removeEventListener("keydown",h);
   },[showTaskForm,showSearch]);
+
+  // 回收站 30 天自动清理（每次 today 变化时执行）
+  useEffect(()=>{
+    if(trash.length===0)return;
+    const cutoff=Date.now()-30*24*60*60*1000;
+    const fresh=trash.filter(t=>(t.deletedAt||0)>cutoff);
+    if(fresh.length!==trash.length)setTrash(fresh);
+  },[today]);
 
   // ═══ Filtered ═══
   // 搜索过滤后的全量任务（给所有视图共享）
@@ -945,7 +1149,9 @@ function MainApp({user}){
     schedGroups,schedDates,schedFilter,setSchedFilter,
     reviewSub,setReviewSub,history,searchQ,
     projectFilter,setProjectFilter,saveProject,removeProject,setShowProjectForm,setEditProjectId,editProjectId,
+    openProjectId,setOpenProjectId,
     view,setView,startPomodoro,
+    selectedIds,toggleSelect,clearSelect,inSelectMode,bulkRemove,bulkSetCategory,bulkSetDue,bulkComplete,
   };
 
   return(
@@ -957,7 +1163,7 @@ function MainApp({user}){
 
       {/* DESKTOP */}
       <div className="desktop-layout desktop-only" style={{position:"relative",zIndex:3}}>
-        <SideNav th={th} view={view} setView={setView} projects={projects} catOf={catOf} tasks={tasks} today={today} setShowSettings={setShowSettings} setEditProjectId={setEditProjectId} setShowProjectForm={setShowProjectForm} displayName={displayName}/>
+        <SideNav th={th} view={view} setView={setView} projects={projects} catOf={catOf} tasks={tasks} today={today} setShowSettings={setShowSettings} setEditProjectId={setEditProjectId} setShowProjectForm={setShowProjectForm} setOpenProjectId={setOpenProjectId} displayName={displayName}/>
         <div style={{display:"flex",flexDirection:"column",minHeight:"100vh"}}>
           <TopBar th={th} view={view} setView={setView} setShowCmdK={setShowCmdK} setShowTaskForm={setShowTaskForm} syncStatus={syncStatus} displayName={displayName} setShowSettings={setShowSettings} setShowSearch={setShowSearch}/>
           <main style={{flex:1,overflowY:"auto",padding:"24px 32px 28px",minWidth:0,position:"relative"}} className="slim-scroll">
@@ -983,6 +1189,7 @@ function MainApp({user}){
 
       {/* OVERLAYS */}
       {undo&&<UndoToast th={th} undo={undo} doUndo={doUndo}/>}
+      {inSelectMode&&<BulkActionBar th={th} count={selectedIds.size} cats={cats} clearSelect={clearSelect} bulkRemove={bulkRemove} bulkSetCategory={bulkSetCategory} bulkSetDue={bulkSetDue} bulkComplete={bulkComplete} today={today}/>}
       {toastMsg&&<StatusToast th={th} toastMsg={toastMsg}/>}
       {showInstall&&<InstallBanner th={th} installPWA={installPWA} dismissInstall={dismissInstall}/>}
       {showIOSGuide&&<IOSInstallGuide th={th} onClose={()=>setShowIOSGuide(false)}/>}
@@ -992,7 +1199,7 @@ function MainApp({user}){
       {showProjectForm&&<ProjectForm th={th} projects={projects} editProjectId={editProjectId} onSave={saveProject} onCancel={()=>{setShowProjectForm(false);setEditProjectId(null);}}/>}
       {showTaskForm&&<TaskForm th={th} cats={cats} projects={projects} taskForm={taskForm} setTaskForm={setTaskForm} addOrEditTask={addOrEditTask} cancelForm={cancelForm} editTaskId={editTaskId} today={today}/>}
       {showTemplates&&<TemplatePicker th={th} cats={cats} setShowTemplates={setShowTemplates} addFromTemplate={addFromTemplate}/>}
-      {showSettings&&<Settings th={th} themeId={themeId} setThemeId={setThemeId} cats={cats} setCats={setCats} projects={projects} setProjects={setProjects} tasks={tasks} history={history} setTasks={setTasks} setHistory={setHistory} onClose={()=>setShowSettings(false)} user={user} onSignOut={signOut} notifPerm={notifPerm} askNotif={askNotif} installPWA={installPWA} installState={installState} today={today} showToast={showToast}/>}
+      {showSettings&&<Settings th={th} themeId={themeId} setThemeId={setThemeId} cats={cats} setCats={setCats} projects={projects} setProjects={setProjects} tasks={tasks} history={history} setTasks={setTasks} setHistory={setHistory} trash={trash} restoreTask={restoreTask} purgeTask={purgeTask} emptyTrash={emptyTrash} onClose={()=>setShowSettings(false)} user={user} onSignOut={signOut} notifPerm={notifPerm} askNotif={askNotif} installPWA={installPWA} installState={installState} today={today} showToast={showToast} catOf={catOf}/>}
     </div>
   );
 }
@@ -1012,7 +1219,7 @@ function ViewRouter(p){
 }
 
 // ═══ SIDE NAV (desktop) ═══
-function SideNav({th,view,setView,projects,catOf,tasks,today,setShowSettings,setEditProjectId,setShowProjectForm,displayName}){
+function SideNav({th,view,setView,projects,catOf,tasks,today,setShowSettings,setEditProjectId,setShowProjectForm,setOpenProjectId,displayName}){
   const items=[
     {id:"today",t:"今日",ic:"target"},
     {id:"tomorrow",t:"明日",ic:"arrowRight"},
@@ -1051,7 +1258,7 @@ function SideNav({th,view,setView,projects,catOf,tasks,today,setShowSettings,set
       {projects.map(p=>{
         const taskN=tasks.filter(t=>t.projectId===p.id).length;
         return(
-          <button key={p.id} onClick={()=>{setView("projects");}} className="nav-item" style={{padding:"8px 12px"}}>
+          <button key={p.id} onClick={()=>{setOpenProjectId&&setOpenProjectId(p.id);setView("projects");}} className="nav-item" style={{padding:"8px 12px"}}>
             <span style={{width:8,height:8,borderRadius:3,background:p.color,boxShadow:`0 0 6px ${p.color}80`,flexShrink:0}}/>
             <span style={{flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontSize:12}}>{p.name}</span>
             {taskN>0&&<span className="mono tnum" style={{fontSize:9,color:th.ink3}}>{taskN}</span>}
@@ -1404,6 +1611,55 @@ function UndoToast({th,undo,doUndo}){
     <button onClick={doUndo} style={{color:th.bg0,fontSize:13,fontWeight:700,opacity:.9}}>撤销</button>
   </div>;
 }
+
+// ═══ 批量操作工具栏（多选模式时浮在底部）═══
+function BulkActionBar({th,count,cats,clearSelect,bulkRemove,bulkSetCategory,bulkSetDue,bulkComplete,today}){
+  const[showCat,setShowCat]=useState(false);
+  const[showDate,setShowDate]=useState(false);
+  return(
+    <div className="slideUp" style={{position:"fixed",bottom:78,left:12,right:12,maxWidth:520,margin:"0 auto",background:th.isDark?"rgba(20,16,40,0.92)":"rgba(255,255,255,0.96)",backdropFilter:"blur(20px) saturate(180%)",WebkitBackdropFilter:"blur(20px) saturate(180%)",border:`1.5px solid ${th.accent}88`,borderRadius:18,padding:"12px 14px",boxShadow:`0 16px 40px ${th.accent}40,0 0 0 1px ${th.accent}30`,zIndex:300}}>
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:showCat||showDate?10:0}}>
+        <div style={{flex:1,display:"flex",alignItems:"center",gap:10}}>
+          <button onClick={clearSelect} style={{width:32,height:32,borderRadius:9,background:th.glass2,display:"flex",alignItems:"center",justifyContent:"center"}}><Ic n="close" size={13} color={th.ink2}/></button>
+          <div>
+            <div className="display" style={{fontSize:18,color:th.ink0,letterSpacing:"-0.02em",lineHeight:1}}>已选 <em style={{fontStyle:"italic",color:th.accent}}>{count}</em> 项</div>
+            <div className="mono" style={{fontSize:9,color:th.ink3,letterSpacing:"0.14em",marginTop:3,fontWeight:600}}>BULK ACTIONS</div>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:6}}>
+          <button onClick={bulkComplete} title="标记为完成" style={{padding:"8px 12px",borderRadius:10,background:"linear-gradient(135deg,#10d9a3,#10a376)",color:"#fff",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5,boxShadow:"0 4px 12px rgba(16,217,163,0.4)"}}><Ic n="check" size={12} sw={2.5}/> 完成</button>
+          <button onClick={()=>{setShowCat(s=>!s);setShowDate(false);}} title="改分类" style={{width:34,height:34,borderRadius:10,background:showCat?th.accent:th.glass2,color:showCat?"#fff":th.ink1,display:"flex",alignItems:"center",justifyContent:"center"}}><Ic n="layers" size={13} color={showCat?"#fff":th.ink1}/></button>
+          <button onClick={()=>{setShowDate(s=>!s);setShowCat(false);}} title="改日期" style={{width:34,height:34,borderRadius:10,background:showDate?th.accent:th.glass2,color:showDate?"#fff":th.ink1,display:"flex",alignItems:"center",justifyContent:"center"}}><Ic n="calendar" size={13} color={showDate?"#fff":th.ink1}/></button>
+          <button onClick={bulkRemove} title="删除" style={{width:34,height:34,borderRadius:10,background:"rgba(255,93,122,0.15)",color:"#ff5d7a",border:"1px solid rgba(255,93,122,0.3)",display:"flex",alignItems:"center",justifyContent:"center"}}><Ic n="trash" size={13} color="#ff5d7a"/></button>
+        </div>
+      </div>
+      {showCat&&(
+        <div className="fadeIn" style={{display:"flex",gap:5,flexWrap:"wrap",paddingTop:10,borderTop:`1px solid ${th.glassBorder}`}}>
+          {cats.map(c=>(
+            <button key={c.id} onClick={()=>{bulkSetCategory(c.id);setShowCat(false);}} style={{padding:"7px 12px",borderRadius:8,background:c.color+"20",color:c.color,fontSize:12,fontWeight:600,border:`1px solid ${c.color}40`,display:"flex",alignItems:"center",gap:5}}>
+              <span>{c.glyph}</span> {c.name}
+            </button>
+          ))}
+        </div>
+      )}
+      {showDate&&(
+        <div className="fadeIn" style={{display:"flex",gap:5,flexWrap:"wrap",paddingTop:10,borderTop:`1px solid ${th.glassBorder}`}}>
+          {[
+            ["今天",today],
+            ["明天",addDays(today,1)],
+            ["后天",addDays(today,2)],
+            ["3 天后",addDays(today,3)],
+            ["下周一",(()=>{const d=new Date(today);const cur=d.getDay();let diff=1-cur;if(diff<=0)diff+=7;d.setDate(d.getDate()+diff);return d.toISOString().slice(0,10);})()],
+            ["清除日期",""],
+          ].map(([label,date])=>(
+            <button key={label} onClick={()=>{bulkSetDue(date);setShowDate(false);}} style={{padding:"7px 12px",borderRadius:8,background:th.glass1,color:th.ink1,fontSize:12,fontWeight:500,border:`1px solid ${th.glassBorder}`}}>{label}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StatusToast({th,toastMsg}){
   const bg=toastMsg.type==="success"?"#10d9a3":toastMsg.type==="error"?"#ff5d7a":th.accent;
   return<div className="toast" style={{position:"fixed",top:20,left:"50%",transform:"translateX(-50%)",background:bg,color:"#fff",padding:"10px 22px",borderRadius:30,fontSize:12,fontWeight:600,boxShadow:`0 6px 22px ${bg}80`,zIndex:400,letterSpacing:"0.04em"}}>{toastMsg.msg}</div>;
@@ -1734,7 +1990,7 @@ function TasksView(p){
   const catsWithTasks=cats.filter(c=>viewRange.some(t=>t.category===c.id));
   const emptyText=view==="tomorrow"?"明天暂无安排 · 新建一条提前规划":"今天没有任务 · 享受这份轻松";
   const quickDueForView=view==="tomorrow"?tomorrow:today;
-  const phAdd=view==="tomorrow"?"为明天添加任务… 回车添加":"快速添加任务… 回车添加";
+  const phAdd=view==="tomorrow"?"为明天添加…试试「下午3点开会30分钟」":"快速添加…试试「明天9点写周报」";
 
   return(
     <div className="fadeIn">
@@ -1893,18 +2149,44 @@ function TaskGroupedList({list,th,...rest}){
 }
 
 // ═══ TASK CARD ═══
-function TaskCard({task:t,th,catOf,projOf,today,nowMin,poppingId,runningId,toggleTask,toggleTimer,removeTask,startEdit,expanded,setExpanded,updateProgress}){
+function TaskCard({task:t,th,catOf,projOf,today,nowMin,poppingId,runningId,toggleTask,toggleTimer,removeTask,startEdit,expanded,setExpanded,updateProgress,selectedIds,toggleSelect,inSelectMode}){
   const c=catOf(t.category);
   const p=t.projectId?projOf(t.projectId):null;
   const overdue=isOverdue(t,today,nowMin);
   const isRunning=runningId===t.id;
   const popping=poppingId===t.id;
   const exp=expanded[t.id];
+  const isSelected=selectedIds&&selectedIds.has(t.id);
+  // 长按检测
+  const longPressTimer=useRef(null);
+  const startLongPress=()=>{
+    if(longPressTimer.current)clearTimeout(longPressTimer.current);
+    longPressTimer.current=setTimeout(()=>{
+      toggleSelect&&toggleSelect(t.id);
+      // 触发触觉反馈
+      if(navigator.vibrate)navigator.vibrate(15);
+    },420);
+  };
+  const cancelLongPress=()=>{if(longPressTimer.current){clearTimeout(longPressTimer.current);longPressTimer.current=null;}};
+  // 主要点击行为：选中模式下点卡片切换选中
+  const onCardClick=(e)=>{
+    if(inSelectMode){
+      e.stopPropagation();
+      toggleSelect&&toggleSelect(t.id);
+      return;
+    }
+    // Cmd / Ctrl + click 进多选（桌面）
+    if((e.metaKey||e.ctrlKey)&&toggleSelect){
+      e.stopPropagation();
+      toggleSelect(t.id);
+      return;
+    }
+  };
   return(
-    <div className="task-card glass" style={{padding:"13px 16px",borderRadius:12,borderLeft:`3px solid ${t.done?"#10d9a3":overdue?"#ff5d7a":c.color}`,boxShadow:isRunning?`0 8px 24px ${c.color}40,0 0 0 1px ${c.color}40`:undefined,opacity:t.done?0.65:1}}>
+    <div onClick={onCardClick} onTouchStart={startLongPress} onTouchEnd={cancelLongPress} onTouchMove={cancelLongPress} onMouseDown={e=>{if(e.button===0&&!inSelectMode)startLongPress();}} onMouseUp={cancelLongPress} onMouseLeave={cancelLongPress} className="task-card glass" style={{padding:"13px 16px",borderRadius:12,borderLeft:`3px solid ${isSelected?th.accent:t.done?"#10d9a3":overdue?"#ff5d7a":c.color}`,boxShadow:isSelected?`0 0 0 2px ${th.accent},0 8px 22px ${th.accent}40`:isRunning?`0 8px 24px ${c.color}40,0 0 0 1px ${c.color}40`:undefined,opacity:t.done?0.65:1,cursor:inSelectMode?"pointer":"default",userSelect:"none"}}>
       <div style={{display:"flex",alignItems:"flex-start",gap:12}}>
-        <button onClick={()=>toggleTask(t.id)} className={popping?"checkAnim":""} style={{flexShrink:0,marginTop:2,width:20,height:20,borderRadius:6,background:t.done?`linear-gradient(135deg,${c.color},${c.color}aa)`:"transparent",border:t.done?"none":`1.5px solid ${th.glassBorderStrong}`,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:t.done?`0 0 8px ${c.color}60`:"none"}}>
-          {t.done&&<Ic n="check" size={12} color="#fff" sw={2.5}/>}
+        <button onClick={e=>{e.stopPropagation();if(inSelectMode){toggleSelect(t.id);}else{toggleTask(t.id);}}} className={popping?"checkAnim":""} style={{flexShrink:0,marginTop:2,width:20,height:20,borderRadius:6,background:isSelected?th.accent:t.done?`linear-gradient(135deg,${c.color},${c.color}aa)`:"transparent",border:isSelected?"none":t.done?"none":`1.5px solid ${th.glassBorderStrong}`,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:isSelected?`0 0 8px ${th.accent}aa`:t.done?`0 0 8px ${c.color}60`:"none"}}>
+          {isSelected?<Ic n="check" size={12} color="#fff" sw={2.5}/>:t.done&&<Ic n="check" size={12} color="#fff" sw={2.5}/>}
         </button>
         <div style={{flex:1,minWidth:0}}>
           <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:4}}>
@@ -2299,9 +2581,17 @@ function DayDetailModal({th,date,tasks,catOf,toggleTask,removeTask,startEdit,onC
 }
 
 // ═══ PROJECTS VIEW ═══
-function ProjectsView({th,projects,tasks,catOf,setShowProjectForm,setEditProjectId,removeProject,startEdit,toggleTask,updateProgress,setTaskForm,setShowTaskForm,today}){
+function ProjectsView({th,projects,tasks,catOf,setShowProjectForm,setEditProjectId,removeProject,startEdit,toggleTask,updateProgress,setTaskForm,setShowTaskForm,today,openProjectId,setOpenProjectId}){
   const[selected,setSelected]=useState(null);
   const[showDone,setShowDone]=useState(false);
+
+  // 外部触发跳转（左侧栏点项目时设置 openProjectId）
+  useEffect(()=>{
+    if(openProjectId){
+      setSelected(openProjectId);
+      setOpenProjectId&&setOpenProjectId(null); // 消费一次
+    }
+  },[openProjectId]);
 
   const projStats=projects.map(p=>{
     const pt=tasks.filter(t=>t.projectId===p.id);
@@ -2923,7 +3213,7 @@ function AllHistory({th,tasks,history,catOf,today}){
 }
 
 // ═══ SETTINGS ═══
-function Settings({th,themeId,setThemeId,cats,setCats,projects,setProjects,tasks,history,setTasks,setHistory,onClose,user,onSignOut,notifPerm,askNotif,installPWA,installState,today,showToast}){
+function Settings({th,themeId,setThemeId,cats,setCats,projects,setProjects,tasks,history,setTasks,setHistory,trash,restoreTask,purgeTask,emptyTrash,onClose,user,onSignOut,notifPerm,askNotif,installPWA,installState,today,showToast,catOf}){
   const[tab,setTab]=useState("appearance");
   const exportJSON=()=>{const data={tasks,history,cats,projects,exportedAt:todayStr()};const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=`timelinek-${todayStr()}.json`;a.click();URL.revokeObjectURL(url);showToast("已导出","success");};
   const exportXLSX=()=>{
@@ -2964,7 +3254,7 @@ function Settings({th,themeId,setThemeId,cats,setCats,projects,setProjects,tasks
           <button onClick={onClose} style={{width:34,height:34,borderRadius:10,background:th.glass2,display:"flex",alignItems:"center",justifyContent:"center"}}><Ic n="close" size={14} color={th.ink2}/></button>
         </div>
         <div style={{padding:"10px 16px",display:"flex",gap:4,overflowX:"auto",borderBottom:`1px solid ${th.glassBorder}`}} className="slim-scroll">
-          {[["appearance","外观","palette"],["account","账户","user"],["categories","分类","layers"],["data","数据","download"],["about","关于","info"]].map(([k,l,ic])=>(
+          {[["appearance","外观","palette"],["account","账户","user"],["categories","分类","layers"],["trash",`回收站${trash&&trash.length?` · ${trash.length}`:""}`,"trash"],["data","数据","download"],["about","关于","info"]].map(([k,l,ic])=>(
             <button key={k} onClick={()=>setTab(k)} className={`view-tab ${tab===k?"active":""}`} style={{flexShrink:0}}>
               <Ic n={ic} size={11} color={tab===k?"#fff":th.ink2}/> {l}
             </button>
@@ -3045,6 +3335,43 @@ function Settings({th,themeId,setThemeId,cats,setCats,projects,setProjects,tasks
                 </div>
               ))}
               <button onClick={()=>{const name=prompt("分类名称");if(!name)return;const glyph=prompt("图标（一个字符）","◆")||"◆";setCats([...cats,{id:"custom"+Date.now(),name,color:"#a8a2c4",glyph:glyph.slice(0,2)}]);}} className="glass" style={{padding:"11px 14px",borderRadius:11,color:th.ink2,fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:6,border:`1px dashed ${th.glassBorder}`}}><Ic n="plus" size={12}/> 添加分类</button>
+            </div>
+          )}
+
+          {tab==="trash"&&(
+            <div>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+                <div>
+                  <div className="mono" style={{fontSize:11,letterSpacing:"0.18em",color:th.ink3,marginBottom:4,fontWeight:600}}>RECYCLE BIN · {trash.length} 项</div>
+                  <div style={{fontSize:11,color:th.ink3,lineHeight:1.6}}>已删除任务保留 30 天后自动永久删除</div>
+                </div>
+                {trash.length>0&&<button onClick={emptyTrash} style={{padding:"7px 12px",borderRadius:9,background:"rgba(255,93,122,0.12)",color:"#ff5d7a",fontSize:11,fontWeight:600,border:"1px solid rgba(255,93,122,0.3)"}}>清空</button>}
+              </div>
+              {trash.length===0?(
+                <EmptyState th={th} text="回收站是空的" icon="trash"/>
+              ):(
+                <div className="slim-scroll" style={{display:"flex",flexDirection:"column",gap:6,maxHeight:"50vh",overflowY:"auto"}}>
+                  {[...trash].sort((a,b)=>(b.deletedAt||0)-(a.deletedAt||0)).map(t=>{
+                    const c=catOf?catOf(t.category):{name:t.category,color:"#888",glyph:"■"};
+                    const days=Math.max(0,30-Math.floor((Date.now()-(t.deletedAt||Date.now()))/(24*60*60*1000)));
+                    const deletedAtStr=new Date(t.deletedAt||Date.now()).toLocaleString("zh-CN",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"});
+                    return(
+                      <div key={t.id} className="glass" style={{padding:"11px 13px",borderRadius:10,borderLeft:`3px solid ${c.color}`,display:"flex",alignItems:"center",gap:10}}>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontSize:13,color:th.ink0,fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.title}</div>
+                          <div style={{display:"flex",gap:8,marginTop:3,flexWrap:"wrap"}}>
+                            <span className="mono" style={{fontSize:10,color:c.color,fontWeight:600}}>{c.glyph} {c.name}</span>
+                            <span className="mono" style={{fontSize:10,color:th.ink3}}>· 删于 {deletedAtStr}</span>
+                            <span className="mono" style={{fontSize:10,color:days<=3?"#ff5d7a":th.ink3}}>· {days} 天后清理</span>
+                          </div>
+                        </div>
+                        <button onClick={()=>restoreTask(t.id)} title="恢复" style={{padding:"6px 10px",borderRadius:7,background:"rgba(16,217,163,0.12)",color:"#10d9a3",fontSize:11,fontWeight:600,border:"1px solid rgba(16,217,163,0.3)"}}>恢复</button>
+                        <button onClick={()=>{if(confirm(`永久删除「${t.title}」？`))purgeTask(t.id);}} title="永久删除" style={{width:28,height:28,borderRadius:7,background:th.glass2,display:"flex",alignItems:"center",justifyContent:"center"}}><Ic n="trash" size={11} color={th.ink3}/></button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 

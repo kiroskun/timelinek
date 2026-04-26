@@ -1621,7 +1621,7 @@ function MainApp({user}){
           </main>
           <Dock th={th} tasks={tasks} doneAll={doneAll} totalAll={totalAll} todayDone={todayDone} todayTotal={todayTotal} syncStatus={syncStatus}/>
         </div>
-        <RightRail th={th} tasks={tasks} history={history} catOf={catOf} today={today} nowMin={nowMin} runningTask={runningTask} toggleTimer={toggleTimer} toggleTask={toggleTask} setPomodoroFull={setPomodoroFull} startPomodoro={startPomodoro}/>
+        <RightRail th={th} tasks={tasks} history={history} catOf={catOf} today={today} nowMin={nowMin} runningTask={runningTask} toggleTimer={toggleTimer} toggleTask={toggleTask} setPomodoroFull={setPomodoroFull} startPomodoro={startPomodoro} projects={projects}/>
       </div>
 
       {/* MOBILE */}
@@ -1806,7 +1806,7 @@ function MiniStat({th,label,value,sub,c}){
 }
 
 // ═══ RIGHT RAIL ═══
-function RightRail({th,tasks,history,catOf,today,nowMin,runningTask,toggleTimer,toggleTask,setPomodoroFull,startPomodoro}){
+function RightRail({th,tasks,history,catOf,today,nowMin,runningTask,toggleTimer,toggleTask,setPomodoroFull,startPomodoro,projects}){
   const last30=Array.from({length:30},(_,i)=>addDays(today,-i));
   let streak=0;
   for(const d of last30){const h=history.find(x=>x.date===d);const hasDone=d===today?tasks.filter(t=>t.due===today).some(t=>t.done):(h&&h.tasks.some(t=>t.done));if(hasDone)streak++;else break;}

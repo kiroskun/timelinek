@@ -349,6 +349,29 @@ function addToInbox(msg){
   setInbox([...all,newMsg]);
   return newMsg;
 }
+// 合并 inbox：按 id 合并；同 id 时本地的 read/starred/archived 优先（保留用户操作）；新邮件直接加入；按时间排序
+function mergeInbox(local,cloud){
+  const localMap=new Map((local||[]).map(m=>[m.id,m]));
+  const cloudMap=new Map((cloud||[]).map(m=>[m.id,m]));
+  const allIds=new Set([...localMap.keys(),...cloudMap.keys()]);
+  const merged=[];
+  allIds.forEach(id=>{
+    const l=localMap.get(id),c=cloudMap.get(id);
+    if(l&&c){
+      // 同 id：内容以云端为准，但用户操作（read/starred/archived）优先取「true 值」（即任一端标记过就算）
+      merged.push({
+        ...c,
+        read:l.read||c.read,
+        starred:l.starred||c.starred,
+        archived:l.archived||c.archived,
+      });
+    }else{
+      merged.push(l||c);
+    }
+  });
+  return merged.sort((a,b)=>(a.createdAt||"").localeCompare(b.createdAt||"")).slice(-200);
+}
+
 // 未读数
 function getUnreadCount(){
   return getInbox().filter(m=>!m.read&&!m.archived).length;
@@ -2334,6 +2357,9 @@ function MainApp({user}){
     if(!loaded)return;
     const poll=setInterval(async()=>{
       if(saveTimer.current)return;
+      // 跳过：最近 5 秒内有本地写入（避免覆盖用户最新操作）
+      const localTime=localCacheLoad(user.id)?.savedAt||0;
+      if(Date.now()-localTime<5000)return;
       try{
         const cloud=await cloudLoad(user.id);
         if(!cloud)return;
@@ -2352,16 +2378,49 @@ function MainApp({user}){
           if(Array.isArray(cloud.tags))setTags(cloud.tags);
           if(Array.isArray(cloud.journals))setJournals(cloud.journals);
           setThemeId(cloud.theme_id||"aurora");
-          // AI 数据也同步：写入 localStorage + 通知 AssistantView 重读
+          // AI 数据用「智能合并」而非粗暴覆盖 —— 避免本地最新操作被 poll 覆盖回旧版
           try{
+            // chat: 比较条数，云端更多才用云端
             if(Array.isArray(cloud.chat_messages)){
-              localStorage.setItem("tlk_chat_v1",JSON.stringify(cloud.chat_messages));
-              window.dispatchEvent(new Event("tlk_chat_synced"));
+              let localChat=[];
+              try{const r=localStorage.getItem("tlk_chat_v1");if(r)localChat=JSON.parse(r)||[];}catch{}
+              const cloudLastTs=cloud.chat_messages.length>0?(cloud.chat_messages[cloud.chat_messages.length-1]?.ts||0):0;
+              const localLastTs=localChat.length>0?(localChat[localChat.length-1]?.ts||0):0;
+              // 云端最后消息更新才覆盖，否则保留本地
+              if(cloudLastTs>localLastTs||(cloud.chat_messages.length>localChat.length&&cloudLastTs>=localLastTs)){
+                localStorage.setItem("tlk_chat_v1",JSON.stringify(cloud.chat_messages));
+                window.dispatchEvent(new Event("tlk_chat_synced"));
+              }
             }
-            if(cloud.ai_profile&&typeof cloud.ai_profile==="object")localStorage.setItem(PROFILE_KEY,JSON.stringify(cloud.ai_profile));
-            if(Array.isArray(cloud.ai_insights))localStorage.setItem(INSIGHTS_KEY,JSON.stringify(cloud.ai_insights));
-            if(Array.isArray(cloud.inbox_messages)){localStorage.setItem(INBOX_KEY,JSON.stringify(cloud.inbox_messages));window.dispatchEvent(new Event("tlk_inbox_updated"));}
-          }catch{}
+            if(cloud.ai_profile&&typeof cloud.ai_profile==="object"){
+              let localProfile=null;
+              try{const r=localStorage.getItem(PROFILE_KEY);if(r)localProfile=JSON.parse(r);}catch{}
+              const cloudUpd=cloud.ai_profile.updatedAt||"";
+              const localUpd=localProfile?.updatedAt||"";
+              if(cloudUpd>localUpd)localStorage.setItem(PROFILE_KEY,JSON.stringify(cloud.ai_profile));
+            }
+            if(Array.isArray(cloud.ai_insights)){
+              let localIns=[];
+              try{const r=localStorage.getItem(INSIGHTS_KEY);if(r)localIns=JSON.parse(r)||[];}catch{}
+              if(cloud.ai_insights.length>localIns.length){
+                localStorage.setItem(INSIGHTS_KEY,JSON.stringify(cloud.ai_insights));
+              }
+            }
+            // inbox: 按 id 合并，已读/标星/归档以本地为准（保留用户最新操作）
+            if(Array.isArray(cloud.inbox_messages)){
+              let localInbox=[];
+              try{const r=localStorage.getItem(INBOX_KEY);if(r)localInbox=JSON.parse(r)||[];}catch{}
+              const merged=mergeInbox(localInbox,cloud.inbox_messages);
+              const changed=merged.length!==localInbox.length||merged.some((m,i)=>{
+                const l=localInbox.find(x=>x.id===m.id);
+                return!l||l.read!==m.read||l.starred!==m.starred||l.archived!==m.archived;
+              });
+              if(changed){
+                localStorage.setItem(INBOX_KEY,JSON.stringify(merged));
+                window.dispatchEvent(new Event("tlk_inbox_updated"));
+              }
+            }
+          }catch(e){console.warn("[Poll AI sync]",e);}
           showToast("已同步其他设备的更新","info");
         }
       }catch{}

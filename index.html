@@ -439,7 +439,7 @@ const emptyTask={title:"",content:"",category:"work",priority:"中",due:"",timeS
 // ═══ CLOUD SYNC ═══
 async function cloudLoad(userId){try{const{data,error}=await supabase.from("user_data").select("*").eq("user_id",userId).maybeSingle();if(error)throw error;return data;}catch(e){return null;}}
 async function cloudSave(userId,p){
-  const base={user_id:userId,tasks:p.tasks||[],history:p.history||[],cats:p.cats||DEFAULT_CATEGORIES,trash:p.trash||[],tags:p.tags||[],theme_id:p.themeId||"aurora",updated_at:new Date().toISOString()};
+  const base={user_id:userId,tasks:p.tasks||[],history:p.history||[],cats:p.cats||DEFAULT_CATEGORIES,trash:p.trash||[],tags:p.tags||[],journals:p.journals||[],theme_id:p.themeId||"aurora",updated_at:new Date().toISOString()};
   try{
     const{error}=await supabase.from("user_data").upsert({...base,projects:p.projects||[]},{onConflict:"user_id"});
     if(!error)return{ok:true,partial:false};
@@ -510,6 +510,7 @@ const IC_PATHS={
   edit:<><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></>,
   trash:<><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></>,
   hash:<><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></>,
+  book:<><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></>,
   filter:<polygon points="22 3 2 3 10 12.5 10 19 14 21 14 12.5 22 3"/>,
   target:<><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/></>,
   layers:<><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></>,
@@ -672,6 +673,8 @@ function MainApp({user}){
   const[projects,setProjects]=useState(DEFAULT_PROJECTS);
   const[trash,setTrash]=useState([]); // 回收站，30 天后自动清
   const[tags,setTags]=useState([]); // 标签库
+  const[journals,setJournals]=useState([]); // 一句话日记
+  const[showJournalModal,setShowJournalModal]=useState(false);
   const[selectedIds,setSelectedIds]=useState(new Set()); // 多选 id 集合
   const inSelectMode=selectedIds.size>0;
   const toggleSelect=id=>{
@@ -760,6 +763,43 @@ function MainApp({user}){
     // 同时从所有任务中移除该 tagId
     setTasks(list=>list.map(t=>(t.tagIds||[]).includes(id)?{...t,tagIds:t.tagIds.filter(x=>x!==id)}:t));
   };
+  // 日记 CRUD
+  const todayJournal=useMemo(()=>journals.find(j=>j.date===today),[journals,today]);
+  const saveJournal=(text,mood,date)=>{
+    const cleanText=(text||"").trim();
+    if(!cleanText)return false;
+    const targetDate=date||today;
+    const now=new Date().toISOString();
+    setJournals(list=>{
+      const existing=list.find(j=>j.date===targetDate);
+      if(existing){
+        return list.map(j=>j.date===targetDate?{...j,wish:cleanText,mood:mood||j.mood||"",updatedAt:now}:j);
+      }
+      return[...list,{date:targetDate,wish:cleanText,mood:mood||"",createdAt:now,updatedAt:now}];
+    });
+    return true;
+  };
+  const removeJournal=(date)=>{
+    setJournals(list=>list.filter(j=>j.date!==date));
+  };
+  // 检查是否需要弹窗：新一天 + 早上 8 点后 + 今天还没写
+  useEffect(()=>{
+    if(!loaded)return;
+    const hour=new Date().getHours();
+    if(hour<8)return; // 早上 8 点前不弹
+    if(todayJournal&&todayJournal.wish)return; // 今天已经写过
+    // 检查是否本次会话已经被关闭过（避免重复弹）
+    const dismissed=sessionStorage.getItem("journal_dismissed_"+today);
+    if(dismissed)return;
+    // 延迟 1.5 秒，让首屏先渲染完
+    const t=setTimeout(()=>setShowJournalModal(true),1500);
+    return()=>clearTimeout(t);
+  },[loaded,today,todayJournal]);
+  const dismissJournalModal=()=>{
+    setShowJournalModal(false);
+    sessionStorage.setItem("journal_dismissed_"+today,"1");
+  };
+
   const greeting=getGreeting();
   const showToast=useCallback((msg,type="info")=>{setToastMsg({msg,type});setTimeout(()=>setToastMsg(null),2600);},[]);
 
@@ -819,6 +859,7 @@ function MainApp({user}){
         }
         setTrash(Array.isArray(cloud.trash)?cloud.trash:(localCacheLoad()?.trash||[]));
         setTags(Array.isArray(cloud.tags)?cloud.tags:(localCacheLoad()?.tags||[]));
+        setJournals(Array.isArray(cloud.journals)?cloud.journals:(localCacheLoad()?.journals||[]));
         setThemeId(cloud.theme_id||"aurora");
         setSyncStatus("synced");
       }else{
@@ -830,6 +871,7 @@ function MainApp({user}){
           setProjects(cached.projects||DEFAULT_PROJECTS);
           setTrash(cached.trash||[]);
           setTags(cached.tags||[]);
+          setJournals(cached.journals||[]);
           setThemeId(cached.themeId||"aurora");
         }else{
           setTasks([{id:Date.now(),...emptyTask,title:"欢迎使用 Timelinek 👋",content:"试试左侧 ⌘K 打开命令面板 · 或者直接在下面快速添加一条任务",category:"life",priority:"中",due:nowToday,done:false,createdAt:nowToday}]);
@@ -853,7 +895,7 @@ function MainApp({user}){
   const partialSyncRef=useRef(false); // 云端缺 projects 列时为 true，阻止 poll 用云端数据覆盖本地 projects
   useEffect(()=>{
     if(!loaded)return;
-    const payload={tasks,history:snapshot(tasks,history,today),cats,projects,trash,tags,themeId};
+    const payload={tasks,history:snapshot(tasks,history,today),cats,projects,trash,tags,journals,themeId};
     localCacheSave(payload);
     if(saveTimer.current)clearTimeout(saveTimer.current);
     saveTimer.current=setTimeout(async()=>{
@@ -864,7 +906,7 @@ function MainApp({user}){
       saveTimer.current=null;
     },800);
     return()=>{if(saveTimer.current){clearTimeout(saveTimer.current);saveTimer.current=null;}};
-  },[tasks,cats,projects,trash,tags,themeId,loaded,today,history,snapshot,user.id]);
+  },[tasks,cats,projects,trash,tags,journals,themeId,loaded,today,history,snapshot,user.id]);
 
   useEffect(()=>{
     if(!loaded)return;
@@ -886,6 +928,7 @@ function MainApp({user}){
           }
           if(Array.isArray(cloud.trash))setTrash(cloud.trash);
           if(Array.isArray(cloud.tags))setTags(cloud.tags);
+          if(Array.isArray(cloud.journals))setJournals(cloud.journals);
           setThemeId(cloud.theme_id||"aurora");
           showToast("已同步其他设备的更新","info");
         }
@@ -1216,6 +1259,7 @@ function MainApp({user}){
     view,setView,startPomodoro,
     selectedIds,toggleSelect,clearSelect,inSelectMode,bulkRemove,bulkSetCategory,bulkSetDue,bulkComplete,
     tags,setTags,tagsMap,addTag,updateTag,removeTag,reorderTask,
+    journals,saveJournal,removeJournal,setShowJournalModal,
   };
 
   return(
@@ -1263,6 +1307,7 @@ function MainApp({user}){
       {showProjectForm&&<ProjectForm th={th} projects={projects} editProjectId={editProjectId} onSave={saveProject} onCancel={()=>{setShowProjectForm(false);setEditProjectId(null);}}/>}
       {showTaskForm&&<TaskForm th={th} cats={cats} projects={projects} tags={tags} addTag={addTag} taskForm={taskForm} setTaskForm={setTaskForm} addOrEditTask={addOrEditTask} cancelForm={cancelForm} editTaskId={editTaskId} today={today}/>}
       {showTemplates&&<TemplatePicker th={th} cats={cats} setShowTemplates={setShowTemplates} addFromTemplate={addFromTemplate}/>}
+      {showJournalModal&&<JournalModal th={th} today={today} todayJournal={todayJournal} saveJournal={saveJournal} onClose={dismissJournalModal}/>}
       {showSettings&&<Settings th={th} themeId={themeId} setThemeId={setThemeId} cats={cats} setCats={setCats} projects={projects} setProjects={setProjects} tasks={tasks} history={history} setTasks={setTasks} setHistory={setHistory} trash={trash} restoreTask={restoreTask} purgeTask={purgeTask} emptyTrash={emptyTrash} tags={tags} addTag={addTag} updateTag={updateTag} removeTag={removeTag} onClose={()=>setShowSettings(false)} user={user} onSignOut={signOut} notifPerm={notifPerm} askNotif={askNotif} installPWA={installPWA} installState={installState} today={today} showToast={showToast} catOf={catOf}/>}
     </div>
   );
@@ -1278,6 +1323,7 @@ function ViewRouter(p){
     case "projects":return<ProjectsView {...p}/>;
     case "activity":return<ActivityView {...p}/>;
     case "recent":return<RecentView {...p}/>;
+    case "journal":return<JournalView {...p}/>;
     case "review":return<ReviewView {...p}/>;
     default:return<TasksView {...p}/>;
   }
@@ -1294,6 +1340,7 @@ function SideNav({th,view,setView,projects,catOf,tasks,today,setShowSettings,set
     {id:"projects",t:"项目",ic:"folder"},
     {id:"activity",t:"活动流",ic:"list"},
     {id:"recent",t:"近期完成",ic:"check"},
+    {id:"journal",t:"一句日记",ic:"book"},
     {id:"review",t:"复盘",ic:"star"},
   ];
   const todayCount=tasks.filter(t=>t.due===today&&!t.done).length;
@@ -1584,7 +1631,7 @@ function MobileHeader({th,displayName,greeting,dateNum,today,syncStatus,doneAll,
 
 // ═══ MOBILE VIEW SWITCHER ═══
 function MobileViewSwitcher({th,view,setView}){
-  const views=[["today","今日","target"],["tomorrow","明日","arrowRight"],["week","本周","calendar"],["month","月视图","grid"],["kanban","看板","layers"],["projects","项目","folder"],["activity","活动","list"],["recent","近期完成","check"],["review","复盘","star"]];
+  const views=[["today","今日","target"],["tomorrow","明日","arrowRight"],["week","本周","calendar"],["month","月视图","grid"],["kanban","看板","layers"],["projects","项目","folder"],["activity","活动","list"],["recent","近期完成","check"],["journal","日记","book"],["review","复盘","star"]];
   return(
     <div className="slim-scroll" style={{display:"flex",gap:6,marginBottom:16,overflowX:"auto",paddingBottom:2,margin:"0 -14px 16px",padding:"0 14px 2px"}}>
       {views.map(([k,label,icon])=>{
@@ -1678,7 +1725,78 @@ function UndoToast({th,undo,doUndo}){
   </div>;
 }
 
-// ═══ 批量操作工具栏（多选模式时浮在底部）═══
+// ═══ JOURNAL MODAL · 一句话日记弹窗 ═══
+const MOOD_OPTIONS=["😊","🙂","😐","😔","😫","🔥","✨","💪","🌱","☕","🌙","🎯"];
+
+function JournalModal({th,today,todayJournal,saveJournal,onClose}){
+  const[text,setText]=useState((todayJournal&&todayJournal.wish)||"");
+  const[mood,setMood]=useState((todayJournal&&todayJournal.mood)||"");
+  const inputRef=useRef(null);
+  useEffect(()=>{
+    if(inputRef.current)setTimeout(()=>inputRef.current.focus(),300);
+  },[]);
+  const submit=()=>{
+    if(!text.trim())return;
+    saveJournal(text,mood);
+    onClose();
+  };
+  const dateLabel=(()=>{
+    const d=new Date(today);
+    const wd=["日","一","二","三","四","五","六"][d.getDay()];
+    return`${d.getMonth()+1}月${d.getDate()}日 · 周${wd}`;
+  })();
+  const isEditing=!!(todayJournal&&todayJournal.wish);
+  return(
+    <div className="fadeIn modal-overlay" onClick={onClose}>
+      <div onClick={e=>e.stopPropagation()} className="slideUp glass-strong" style={{borderRadius:22,maxWidth:480,width:"100%",padding:"30px 28px 24px",position:"relative",overflow:"hidden"}}>
+        {/* 装饰光斑 */}
+        <div style={{position:"absolute",top:-60,right:-40,width:160,height:160,borderRadius:"50%",background:`radial-gradient(circle,${th.accent}40 0%,transparent 70%)`,filter:"blur(20px)",pointerEvents:"none"}}/>
+        <div style={{position:"absolute",bottom:-50,left:-30,width:120,height:120,borderRadius:"50%",background:`radial-gradient(circle,${th.accent3}30 0%,transparent 70%)`,filter:"blur(20px)",pointerEvents:"none"}}/>
+        
+        <div style={{position:"relative"}}>
+          <div className="mono" style={{fontSize:11,letterSpacing:"0.22em",color:th.ink3,marginBottom:6,fontWeight:600}}>{isEditing?"TODAY · 编辑":"NEW DAY · 一句话日记"}</div>
+          <h2 className="display" style={{fontSize:30,color:th.ink0,letterSpacing:"-0.03em",lineHeight:1.05,marginBottom:6}}>
+            {isEditing?"今日记录":<>新的<em style={{fontStyle:"italic"}} className="gradient-primary">一天</em></>}
+          </h2>
+          <div style={{fontSize:13,color:th.ink2,marginBottom:20}}>{dateLabel} · {isEditing?"补充或修改":"为今天写下一句最重要的话"}</div>
+
+          {/* Mood 选择 */}
+          <div style={{marginBottom:14}}>
+            <div className="mono" style={{fontSize:10,color:th.ink3,letterSpacing:"0.16em",marginBottom:8,fontWeight:600}}>今日心情（可选）</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+              {MOOD_OPTIONS.map(m=>(
+                <button key={m} onClick={()=>setMood(mood===m?"":m)} style={{width:38,height:38,borderRadius:10,border:`1.5px solid ${mood===m?th.accent:th.glassBorder}`,background:mood===m?th.accent+"25":th.glass2,fontSize:18,boxShadow:mood===m?`0 0 12px ${th.accent}80`:"none",transition:"all 0.15s",cursor:"pointer"}}>{m}</button>
+              ))}
+            </div>
+          </div>
+
+          {/* 输入框 */}
+          <input
+            ref={inputRef}
+            value={text}
+            onChange={e=>setText(e.target.value)}
+            onKeyDown={e=>{if(e.isComposing||e.keyCode===229)return;if(e.key==="Enter"&&text.trim())submit();}}
+            placeholder="今天最想做的事 / 一句感悟 / 状态记录…"
+            maxLength={140}
+            className="inp"
+            style={{fontSize:15,padding:"14px 16px",marginBottom:8,fontWeight:500}}
+          />
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+            <span className="mono" style={{fontSize:10,color:th.ink3}}>回车保存 · Esc 关闭</span>
+            <span className="mono tnum" style={{fontSize:10,color:text.length>120?"#ff5d7a":th.ink3}}>{text.length}/140</span>
+          </div>
+
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={onClose} style={{padding:"11px 18px",borderRadius:11,background:th.glass2,color:th.ink2,fontSize:13,fontWeight:500}}>{isEditing?"取消":"以后再说"}</button>
+            <button onClick={submit} disabled={!text.trim()} style={{flex:1,padding:"11px 18px",borderRadius:11,background:text.trim()?`linear-gradient(135deg,${th.accent},${th.accent3})`:th.glass2,color:text.trim()?"#fff":th.ink3,fontSize:13,fontWeight:600,opacity:text.trim()?1:0.5,boxShadow:text.trim()?`0 4px 16px ${th.accent}50`:"none"}}>{isEditing?"保存":"记录今天"}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 function BulkActionBar({th,count,cats,clearSelect,bulkRemove,bulkSetCategory,bulkSetDue,bulkComplete,today}){
   const[showCat,setShowCat]=useState(false);
   const[showDate,setShowDate]=useState(false);
@@ -1792,6 +1910,7 @@ function CmdKPalette({th,setView,setShowCmdK,setShowTaskForm,startPomodoro,setSh
       {ic:"folder",t:"项目",sh:"G P",act:()=>{onClose();setView("projects");}},
       {ic:"list",t:"活动流",sh:"G A",act:()=>{onClose();setView("activity");}},
       {ic:"check",t:"近期完成",sh:"G C",act:()=>{onClose();setView("recent");}},
+      {ic:"book",t:"一句日记",sh:"G J",act:()=>{onClose();setView("journal");}},
       {ic:"star",t:"复盘",sh:"G R",act:()=>{onClose();setView("review");}},
     ]},
     {g:"REVIEW",items:[
@@ -2028,7 +2147,7 @@ function PomodoroFullscreen({th,taskId,runningTask,tasks,nowMin,onClose,toggleTi
 
 // ═══ TASKS VIEW (today / tomorrow / week) ═══
 function TasksView(p){
-  const{th,view,filtered,filter,setFilter,cats,quickTitle,setQuickTitle,quickAdd,setShowTaskForm,setShowTemplates,today,tasks}=p;
+  const{th,view,filtered,filter,setFilter,cats,quickTitle,setQuickTitle,quickAdd,setShowTaskForm,setShowTemplates,today,tasks,journals,setShowJournalModal}=p;
   // week 视图改用按天分组组件；today / tomorrow 走标准分组展示
   if(view==="week"){
     return<WeekGroupedView {...p}/>;
@@ -2063,6 +2182,25 @@ function TasksView(p){
 
   return(
     <div className="fadeIn">
+      {/* 今日日记条（仅 today 视图，已写显示内容，未写显示提示）*/}
+      {view==="today"&&(()=>{
+        const todayJ=journals&&journals.find(j=>j.date===today);
+        if(todayJ&&todayJ.wish){
+          return(
+            <div onClick={()=>setShowJournalModal&&setShowJournalModal(true)} className="glass hover-lift" style={{padding:"12px 16px",borderRadius:13,marginBottom:14,display:"flex",alignItems:"center",gap:11,cursor:"pointer",borderLeft:`3px solid ${th.accent}`,background:`linear-gradient(90deg,${th.accent}10,transparent 60%)`}}>
+              {todayJ.mood&&<span style={{fontSize:18}}>{todayJ.mood}</span>}
+              <div style={{flex:1,minWidth:0}}>
+                <div className="mono" style={{fontSize:9,letterSpacing:"0.16em",color:th.ink3,fontWeight:600,marginBottom:2}}>TODAY · 一句</div>
+                <div style={{fontSize:13,color:th.ink1,fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{todayJ.wish}</div>
+              </div>
+              <Ic n="edit" size={11} color={th.ink3}/>
+            </div>
+          );
+        }
+        // 未写则不显示（弹窗会自动出现）
+        return null;
+      })()}
+
       {/* Quick add */}
       <div className="glass hover-lift" style={{padding:"13px 16px",borderRadius:14,marginBottom:14,display:"flex",alignItems:"center",gap:10,border:`1px dashed ${th.glassBorder}`,background:th.glass1}}>
         <div style={{width:26,height:26,borderRadius:8,background:`linear-gradient(135deg,${th.accent},${th.accent3})`,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:`0 0 10px ${th.accent}66`,flexShrink:0}}>
@@ -3057,6 +3195,235 @@ function ActivityView({th,tasks:allTasks,searchedTasks,history,catOf,today}){
           ))
         }
       </main>
+    </div>
+  );
+}
+
+// ═══ JOURNAL VIEW · 一句话日记历史 ═══
+function JournalView({th,journals,today,saveJournal,removeJournal,setShowJournalModal}){
+  const[viewMode,setViewMode]=useState("timeline"); // timeline / calendar
+  const[editingDate,setEditingDate]=useState(null);
+  const[editText,setEditText]=useState("");
+  const[editMood,setEditMood]=useState("");
+
+  const todayJournal=journals.find(j=>j.date===today);
+
+  // 一年前的日期（自动归档分界）
+  const archiveCutoff=useMemo(()=>{
+    const d=new Date(today);d.setFullYear(d.getFullYear()-1);
+    return d.toISOString().slice(0,10);
+  },[today]);
+
+  // 排序 + 分组
+  const sortedJournals=useMemo(()=>[...journals].sort((a,b)=>b.date.localeCompare(a.date)),[journals]);
+  const recent=sortedJournals.filter(j=>j.date>=archiveCutoff);
+  const archived=sortedJournals.filter(j=>j.date<archiveCutoff);
+
+  // 按月份分组
+  const groupedByMonth=useMemo(()=>{
+    const g={};
+    recent.forEach(j=>{
+      const ym=j.date.slice(0,7); // YYYY-MM
+      if(!g[ym])g[ym]=[];
+      g[ym].push(j);
+    });
+    return Object.keys(g).sort().reverse().map(ym=>({ym,items:g[ym]}));
+  },[recent]);
+
+  // 统计
+  const stats=useMemo(()=>{
+    // 连续天数
+    let streak=0;
+    for(let i=0;i<365;i++){
+      const d=addDays(today,-i);
+      const has=journals.some(j=>j.date===d);
+      if(has)streak++;else if(i>0)break;
+    }
+    // 本月已写
+    const thisMonth=today.slice(0,7);
+    const monthCount=journals.filter(j=>j.date.startsWith(thisMonth)).length;
+    return{streak,total:journals.length,monthCount};
+  },[journals,today]);
+
+  // 日历模式数据：本月每天有没有写
+  const calendarData=useMemo(()=>{
+    const d=new Date(today);
+    const year=d.getFullYear(),month=d.getMonth();
+    const firstDay=new Date(year,month,1);
+    const lastDay=new Date(year,month+1,0);
+    const startWd=(firstDay.getDay()+6)%7; // 周一为 0
+    const days=lastDay.getDate();
+    const cells=[];
+    for(let i=0;i<startWd;i++)cells.push(null);
+    for(let day=1;day<=days;day++){
+      const dStr=`${year}-${String(month+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+      const j=journals.find(x=>x.date===dStr);
+      cells.push({date:dStr,day,journal:j,isToday:dStr===today,isFuture:dStr>today});
+    }
+    return{cells,monthLabel:`${year} 年 ${month+1} 月`};
+  },[journals,today]);
+
+  const startEdit=(j)=>{
+    setEditingDate(j.date);
+    setEditText(j.wish||"");
+    setEditMood(j.mood||"");
+  };
+  const saveEdit=()=>{
+    if(!editText.trim())return;
+    saveJournal(editText.trim(),editMood,editingDate);
+    setEditingDate(null);
+  };
+
+  const cancelEdit=()=>{setEditingDate(null);setEditText("");setEditMood("");};
+
+  const monthLabel=(ym)=>{
+    const[y,m]=ym.split("-");
+    return`${parseInt(m)} 月 ${y}`;
+  };
+  const dateLabel=(d)=>{
+    if(d===today)return"今天";
+    if(d===addDays(today,-1))return"昨天";
+    if(d===addDays(today,-2))return"前天";
+    const dt=new Date(d);
+    return`${dt.getDate()} 日 · 周${["日","一","二","三","四","五","六"][dt.getDay()]}`;
+  };
+
+  return(
+    <div className="fadeIn">
+      <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",marginBottom:18,flexWrap:"wrap",gap:12}}>
+        <div>
+          <div className="mono" style={{fontSize:11,letterSpacing:"0.22em",color:th.ink3,marginBottom:6,fontWeight:600}}>JOURNAL · {journals.length} 篇</div>
+          <h1 className="display" style={{fontSize:44,color:th.ink0,lineHeight:0.95,letterSpacing:"-0.03em"}}>
+            <em style={{fontStyle:"italic"}} className="gradient-primary">一句日记</em>
+          </h1>
+        </div>
+        <button onClick={()=>setShowJournalModal(true)} style={{padding:"11px 18px",borderRadius:12,background:`linear-gradient(135deg,${th.accent},${th.accent3})`,color:"#fff",fontSize:13,fontWeight:600,boxShadow:`0 8px 24px ${th.accent}66`,display:"flex",alignItems:"center",gap:8}}>
+          <Ic n={todayJournal?"edit":"plus"} size={13} sw={2.5}/> {todayJournal?"编辑今日":"写下今日"}
+        </button>
+      </div>
+
+      {/* 统计 */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:10,marginBottom:18}}>
+        <StatCard th={th} label="连续" value={stats.streak} sub="天" color="#10d9a3"/>
+        <StatCard th={th} label="本月" value={stats.monthCount} sub="篇" color={th.accent}/>
+        <StatCard th={th} label="累计" value={stats.total} sub="篇" color={th.accent3}/>
+      </div>
+
+      {/* 模式切换 */}
+      <div style={{display:"flex",gap:6,marginBottom:18}}>
+        <button onClick={()=>setViewMode("timeline")} className={`view-tab ${viewMode==="timeline"?"active":""}`}>时间线</button>
+        <button onClick={()=>setViewMode("calendar")} className={`view-tab ${viewMode==="calendar"?"active":""}`}>本月日历</button>
+      </div>
+
+      {viewMode==="calendar"&&(
+        <div className="glass" style={{padding:18,borderRadius:14,marginBottom:18}}>
+          <div className="display" style={{fontSize:18,color:th.ink0,letterSpacing:"-0.02em",marginBottom:14}}>{calendarData.monthLabel}</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:6,marginBottom:8}}>
+            {["一","二","三","四","五","六","日"].map(w=>(
+              <div key={w} className="mono" style={{textAlign:"center",fontSize:10,color:th.ink3,letterSpacing:"0.1em",fontWeight:600,padding:"4px 0"}}>{w}</div>
+            ))}
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:6}}>
+            {calendarData.cells.map((c,i)=>{
+              if(!c)return<div key={i}/>;
+              const has=!!c.journal;
+              return(
+                <div key={i} onClick={()=>has&&startEdit(c.journal)} style={{aspectRatio:"1",borderRadius:9,background:has?th.accent+"30":c.isToday?th.glass3:th.glass1,border:c.isToday?`1.5px solid ${th.accent}`:`1px solid ${has?th.accent+"60":th.glassBorder}`,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",cursor:has?"pointer":"default",opacity:c.isFuture?0.3:1,position:"relative",transition:"transform 0.12s"}} onMouseEnter={e=>{if(has)e.currentTarget.style.transform="scale(1.08)";}} onMouseLeave={e=>e.currentTarget.style.transform="scale(1)"}>
+                  <span className="mono tnum" style={{fontSize:12,color:has?th.ink0:th.ink2,fontWeight:c.isToday?700:500}}>{c.day}</span>
+                  {has&&c.journal.mood&&<span style={{fontSize:11,marginTop:1}}>{c.journal.mood}</span>}
+                  {has&&!c.journal.mood&&<div style={{width:4,height:4,borderRadius:"50%",background:th.accent,marginTop:2}}/>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {viewMode==="timeline"&&(
+        <>
+          {recent.length===0?(
+            <EmptyState th={th} text="还没有日记 · 点击右上角写下今天的第一句" icon="book"/>
+          ):(
+            <div style={{display:"flex",flexDirection:"column",gap:24}}>
+              {groupedByMonth.map(({ym,items})=>(
+                <div key={ym}>
+                  <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+                    <span className="display" style={{fontSize:18,color:th.ink0,letterSpacing:"-0.02em"}}>{monthLabel(ym)}</span>
+                    <div style={{flex:1,height:1,background:th.glassBorder}}/>
+                    <span className="mono" style={{fontSize:11,color:th.ink3}}>{items.length} 篇</span>
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                    {items.map(j=>{
+                      const isEditing=editingDate===j.date;
+                      return(
+                        <div key={j.date} className="glass hover-lift" style={{padding:"14px 18px",borderRadius:13,borderLeft:`3px solid ${j.date===today?th.accent:th.glassBorderStrong}`}}>
+                          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+                            <span className="mono" style={{fontSize:11,color:th.ink2,letterSpacing:"0.06em",fontWeight:600}}>{dateLabel(j.date)}</span>
+                            <span className="mono" style={{fontSize:9,color:th.ink3,letterSpacing:"0.04em"}}>{j.date}</span>
+                            {j.mood&&<span style={{fontSize:14}}>{j.mood}</span>}
+                            <div style={{flex:1}}/>
+                            {!isEditing&&(
+                              <>
+                                <button onClick={()=>startEdit(j)} title="编辑" style={{width:26,height:26,borderRadius:7,background:th.glass2,display:"flex",alignItems:"center",justifyContent:"center"}}><Ic n="edit" size={11} color={th.ink2}/></button>
+                                <button onClick={()=>{if(confirm(`删除 ${j.date} 的日记？`))removeJournal(j.date);}} title="删除" style={{width:26,height:26,borderRadius:7,background:th.glass2,display:"flex",alignItems:"center",justifyContent:"center"}}><Ic n="trash" size={11} color={th.ink3}/></button>
+                              </>
+                            )}
+                          </div>
+                          {isEditing?(
+                            <div>
+                              <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:8}}>
+                                {MOOD_OPTIONS.map(m=>(
+                                  <button key={m} onClick={()=>setEditMood(editMood===m?"":m)} style={{width:32,height:32,borderRadius:8,border:`1.5px solid ${editMood===m?th.accent:th.glassBorder}`,background:editMood===m?th.accent+"25":th.glass2,fontSize:15,cursor:"pointer"}}>{m}</button>
+                                ))}
+                              </div>
+                              <input value={editText} onChange={e=>setEditText(e.target.value)} onKeyDown={e=>{if(e.isComposing||e.keyCode===229)return;if(e.key==="Enter"&&editText.trim())saveEdit();if(e.key==="Escape")cancelEdit();}} maxLength={140} className="inp" style={{fontSize:14,padding:"10px 14px",marginBottom:8}} autoFocus/>
+                              <div style={{display:"flex",gap:6}}>
+                                <button onClick={cancelEdit} style={{padding:"7px 14px",borderRadius:8,background:th.glass2,color:th.ink2,fontSize:12}}>取消</button>
+                                <button onClick={saveEdit} disabled={!editText.trim()} style={{flex:1,padding:"7px 14px",borderRadius:8,background:editText.trim()?`linear-gradient(135deg,${th.accent},${th.accent3})`:th.glass2,color:editText.trim()?"#fff":th.ink3,fontSize:12,fontWeight:600}}>保存</button>
+                              </div>
+                            </div>
+                          ):(
+                            <div style={{fontSize:14,color:th.ink1,lineHeight:1.65,fontWeight:500}}>{j.wish}</div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* 一年前的归档 */}
+          {archived.length>0&&(
+            <ArchivedJournals th={th} items={archived}/>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function ArchivedJournals({th,items}){
+  const[open,setOpen]=useState(false);
+  return(
+    <div style={{marginTop:24}}>
+      <button onClick={()=>setOpen(o=>!o)} className="glass" style={{padding:"12px 18px",borderRadius:12,width:"100%",display:"flex",alignItems:"center",gap:10,cursor:"pointer",border:`1px dashed ${th.glassBorder}`}}>
+        <Ic n={open?"chevDown":"chevRight"} size={13} color={th.ink3}/>
+        <span className="mono" style={{fontSize:11,letterSpacing:"0.16em",color:th.ink2,fontWeight:600}}>归档 · {items.length} 篇（一年前）</span>
+        <div style={{flex:1}}/>
+      </button>
+      {open&&(
+        <div className="fadeIn" style={{marginTop:8,display:"flex",flexDirection:"column",gap:6,opacity:0.75}}>
+          {items.map(j=>(
+            <div key={j.date} className="glass" style={{padding:"10px 14px",borderRadius:10,display:"flex",alignItems:"center",gap:10}}>
+              <span className="mono" style={{fontSize:10,color:th.ink3,minWidth:80}}>{j.date}</span>
+              {j.mood&&<span style={{fontSize:13}}>{j.mood}</span>}
+              <span style={{flex:1,fontSize:12,color:th.ink2}}>{j.wish}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

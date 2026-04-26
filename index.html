@@ -232,6 +232,31 @@ const SUPABASE_URL="https://goknkixcdjfuyqdkszoa.supabase.co";
 const SUPABASE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdva25raXhjZGpmdXlxZGtzem9hIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY4NDgyOTcsImV4cCI6MjA5MjQyNDI5N30.2kCxH4iZ-8gxm50caGUV5Y9-vaMjNZD-BjjLuESglKc";
 const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
 
+// ═══ AI Configuration ═══
+const AI_WORKER_URL="https://timelinek-ai.bkchen725.workers.dev/";
+
+// 通用 AI 调用：通过 Cloudflare Worker 中转到 DeepSeek
+// 参数：messages 数组、可选 options（temperature/max_tokens 等）
+async function callAI(messages,options={}){
+  const{data}=await supabase.auth.getSession();
+  const token=data.session?.access_token;
+  if(!token)throw new Error("未登录，请先登录");
+  const resp=await fetch(AI_WORKER_URL,{
+    method:"POST",
+    headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
+    body:JSON.stringify({messages,...options})
+  });
+  if(!resp.ok){
+    let errMsg=`AI 服务错误 (${resp.status})`;
+    try{const err=await resp.json();if(err.error)errMsg=err.error;}catch{}
+    throw new Error(errMsg);
+  }
+  const result=await resp.json();
+  // DeepSeek 返回格式：{choices:[{message:{content:"..."}}]}
+  if(result.error)throw new Error(result.error.message||JSON.stringify(result.error));
+  return result.choices?.[0]?.message?.content||"";
+}
+
 // ═══ CONSTANTS ═══
 const DEFAULT_CATEGORIES=[
   {id:"work",name:"工作",color:"#6d5fff",glyph:"◆"},
@@ -349,6 +374,71 @@ function addDays(ds,n){const d=new Date(ds);d.setDate(d.getDate()+n);return date
 function calcMin(s,e){try{const[sh,sm]=s.split(":").map(Number),[eh,em]=e.split(":").map(Number);const d=(eh*60+em)-(sh*60+sm);return d>0?d:null;}catch{return null;}}
 function timeToMin(t){try{const[h,m]=t.split(":").map(Number);return h*60+m;}catch{return null;}}
 function fmtMin(m){if(m==null||isNaN(m))return"";m=Math.round(m);if(m<60)return m+"min";const h=Math.floor(m/60),r=m%60;return h+"h"+(r?r+"m":"");}
+
+// ═══ AI: 智能排今日 ═══
+// 输入今日所有任务 → 调用 AI → 返回带建议时间和理由的排序
+async function aiPlanToday(tasks,catOf,projOf){
+  // 简化数据，只发必要字段（节省 tokens）
+  const taskList=tasks.map((t,i)=>{
+    const c=catOf(t.category);
+    const p=t.projectId?projOf(t.projectId):null;
+    return{
+      i:i+1,
+      id:t.id,
+      title:t.title,
+      cat:c?.name||"",
+      proj:p?.name||"",
+      priority:t.priority,
+      duration:t.duration?Number(t.duration):null,
+      done:!!t.done,
+      timeStart:t.timeStart||"",
+      timeEnd:t.timeEnd||"",
+      content:(t.content||"").slice(0,80),
+    };
+  }).filter(t=>!t.done);
+  if(taskList.length===0)throw new Error("今日没有未完成的任务");
+  const now=new Date();
+  const curHour=String(now.getHours()).padStart(2,"0")+":"+String(now.getMinutes()).padStart(2,"0");
+  const prompt=`你是一个高效的个人时间规划助手。我今天有以下未完成的任务：
+
+${taskList.map(t=>`${t.i}. 【${t.priority}】"${t.title}" 分类:${t.cat}${t.proj?` 项目:${t.proj}`:""}${t.duration?` 预计:${t.duration}分钟`:""}${t.timeStart?` 已设定:${t.timeStart}-${t.timeEnd||"?"}`:""}${t.content?` 备注:${t.content}`:""}`).join("\n")}
+
+当前时间: ${curHour}
+
+请帮我合理排序这些任务（已设定固定时间的任务保持不动），并给出每个任务的建议开始时间。
+
+要求：
+1. 高优先级 + 上午精力好的时段，安排重要/创造性任务
+2. 下午低能量时段，安排沟通/事务性任务
+3. 任务之间留 5-10 分钟缓冲
+4. 一段简短的整体策略说明（≤80字）
+5. 每个任务给出：建议开始时间、一句话理由（≤25字）
+
+严格按以下 JSON 格式返回，不要任何其他文字、不要 markdown：
+{
+  "summary": "整体策略说明",
+  "plan": [
+    {"id": 任务id, "time": "HH:MM", "reason": "理由"},
+    ...
+  ]
+}`;
+  const content=await callAI([
+    {role:"system",content:"你是一位专业的时间管理顾问，擅长帮人合理规划日程。回复必须严格遵循指定格式。"},
+    {role:"user",content:prompt}
+  ],{temperature:0.5,max_tokens:1500});
+  // 解析 JSON（容错处理：可能 AI 包了 markdown ```json ... ```）
+  let jsonStr=content.trim();
+  const m=jsonStr.match(/```(?:json)?\s*([\s\S]+?)\s*```/);
+  if(m)jsonStr=m[1];
+  // 找第一个 { 到最后一个 }
+  const start=jsonStr.indexOf("{"),end=jsonStr.lastIndexOf("}");
+  if(start>=0&&end>start)jsonStr=jsonStr.slice(start,end+1);
+  let parsed;
+  try{parsed=JSON.parse(jsonStr);}
+  catch(e){throw new Error("AI 返回格式异常，请重试。原始内容: "+content.slice(0,150));}
+  if(!Array.isArray(parsed.plan))throw new Error("AI 返回格式不正确");
+  return parsed;
+}
 
 // ═══ NATURAL LANGUAGE PARSER ═══
 // 解析"明天下午 3 点开会 30 分钟" → {title:"开会", due:tomorrow, timeStart:"15:00", duration:30}
@@ -697,6 +787,49 @@ function MainApp({user}){
   const[tags,setTags]=useState([]); // 标签库
   const[journals,setJournals]=useState([]); // 一句话日记
   const[showJournalModal,setShowJournalModal]=useState(false);
+  // ═══ AI 状态 ═══
+  const[aiLoading,setAiLoading]=useState(false);
+  const[aiPlan,setAiPlan]=useState(null); // {summary,plan:[{id,time,reason}]}
+  const[showAiPlanModal,setShowAiPlanModal]=useState(false);
+  const requestAiPlan=async()=>{
+    if(aiLoading)return;
+    setAiLoading(true);
+    try{
+      // 只发今日 + 未完成的任务
+      const todayTasks=tasks.filter(t=>!t.done&&(t.due===today||!t.due));
+      if(todayTasks.length===0){showToast("今日没有待办任务","info");setAiLoading(false);return;}
+      if(todayTasks.length>30){showToast("任务太多（>30），请先精简","error");setAiLoading(false);return;}
+      const result=await aiPlanToday(todayTasks,catOf,projOf);
+      setAiPlan(result);
+      setShowAiPlanModal(true);
+    }catch(err){
+      showToast("AI 排期失败: "+(err.message||"未知错误"),"error");
+    }
+    setAiLoading(false);
+  };
+  // 应用 AI 建议到任务上
+  const applyAiPlan=(planArr)=>{
+    if(!Array.isArray(planArr)||planArr.length===0)return;
+    setTasks(list=>list.map(t=>{
+      const found=planArr.find(p=>p.id===t.id);
+      if(!found)return t;
+      // 只设置 timeStart，不覆盖已有的 timeEnd
+      let newTimeEnd=t.timeEnd;
+      if(t.duration&&found.time){
+        try{
+          const[h,m]=found.time.split(":").map(Number);
+          const total=h*60+m+parseInt(t.duration);
+          if(total<24*60){
+            newTimeEnd=`${String(Math.floor(total/60)).padStart(2,"0")}:${String(total%60).padStart(2,"0")}`;
+          }
+        }catch{}
+      }
+      return{...t,timeStart:found.time,timeEnd:newTimeEnd||t.timeEnd};
+    }));
+    setShowAiPlanModal(false);
+    setAiPlan(null);
+    showToast("已应用 AI 排期建议","success");
+  };
   const[selectedIds,setSelectedIds]=useState(new Set()); // 多选 id 集合
   const inSelectMode=selectedIds.size>0;
   const toggleSelect=id=>{
@@ -1273,6 +1406,7 @@ function MainApp({user}){
     selectedIds,toggleSelect,clearSelect,inSelectMode,bulkRemove,bulkSetCategory,bulkSetDue,bulkComplete,
     tags,setTags,tagsMap,addTag,updateTag,removeTag,reorderTask,
     journals,saveJournal,removeJournal,setShowJournalModal,
+    aiLoading,requestAiPlan,
   };
 
   return(
@@ -1321,6 +1455,7 @@ function MainApp({user}){
       {showTaskForm&&<TaskForm th={th} cats={cats} projects={projects} tags={tags} addTag={addTag} taskForm={taskForm} setTaskForm={setTaskForm} addOrEditTask={addOrEditTask} cancelForm={cancelForm} editTaskId={editTaskId} today={today}/>}
       {showTemplates&&<TemplatePicker th={th} cats={cats} setShowTemplates={setShowTemplates} addFromTemplate={addFromTemplate}/>}
       {showJournalModal&&<JournalModal th={th} today={today} todayJournal={todayJournal} saveJournal={saveJournal} onClose={dismissJournalModal}/>}
+      {showAiPlanModal&&aiPlan&&<AiPlanModal th={th} plan={aiPlan} tasks={tasks} catOf={catOf} onApply={applyAiPlan} onClose={()=>{setShowAiPlanModal(false);setAiPlan(null);}}/>}
       {showSettings&&<Settings th={th} themeId={themeId} setThemeId={setThemeId} cats={cats} setCats={setCats} projects={projects} setProjects={setProjects} tasks={tasks} history={history} setTasks={setTasks} setHistory={setHistory} trash={trash} restoreTask={restoreTask} purgeTask={purgeTask} emptyTrash={emptyTrash} tags={tags} addTag={addTag} updateTag={updateTag} removeTag={removeTag} onClose={()=>setShowSettings(false)} user={user} onSignOut={signOut} notifPerm={notifPerm} askNotif={askNotif} installPWA={installPWA} installState={installState} today={today} showToast={showToast} catOf={catOf}/>}
     </div>
   );
@@ -1736,6 +1871,75 @@ function UndoToast({th,undo,doUndo}){
     <span style={{maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>已删除「{undo.task.title}」</span>
     <button onClick={doUndo} style={{color:th.bg0,fontSize:13,fontWeight:700,opacity:.9}}>撤销</button>
   </div>;
+}
+
+// ═══ AI PLAN MODAL · AI 排期建议弹窗 ═══
+function AiPlanModal({th,plan,tasks,catOf,onApply,onClose}){
+  const[edited,setEdited]=useState(plan?.plan||[]);
+  // 关联到任务详细信息
+  const planWithTasks=useMemo(()=>{
+    return edited.map(p=>{
+      const t=tasks.find(x=>x.id===p.id);
+      return{...p,task:t};
+    }).filter(x=>x.task).sort((a,b)=>(a.time||"99:99").localeCompare(b.time||"99:99"));
+  },[edited,tasks]);
+  const updateTime=(id,time)=>{
+    setEdited(arr=>arr.map(p=>p.id===id?{...p,time}:p));
+  };
+  return(
+    <div className="fadeIn modal-overlay" onClick={onClose}>
+      <div onClick={e=>e.stopPropagation()} className="slideUp glass-strong" style={{borderRadius:22,maxWidth:560,width:"100%",padding:"26px 26px 22px",position:"relative",overflow:"hidden",maxHeight:"88vh",display:"flex",flexDirection:"column"}}>
+        {/* 装饰光斑 */}
+        <div style={{position:"absolute",top:-50,right:-30,width:140,height:140,borderRadius:"50%",background:`radial-gradient(circle,${th.accent}40 0%,transparent 70%)`,filter:"blur(20px)",pointerEvents:"none"}}/>
+        <div style={{position:"absolute",bottom:-40,left:-30,width:120,height:120,borderRadius:"50%",background:`radial-gradient(circle,${th.accent3}30 0%,transparent 70%)`,filter:"blur(20px)",pointerEvents:"none"}}/>
+        
+        <div style={{position:"relative",flexShrink:0}}>
+          <div className="mono" style={{fontSize:11,letterSpacing:"0.22em",color:th.ink3,marginBottom:6,fontWeight:600,display:"flex",alignItems:"center",gap:6}}>
+            <span style={{fontSize:14}}>✨</span> AI · 智能排期建议
+          </div>
+          <h2 className="display" style={{fontSize:24,color:th.ink0,letterSpacing:"-0.02em",lineHeight:1.1,marginBottom:10}}>
+            今日 <em style={{fontStyle:"italic"}} className="gradient-primary">{planWithTasks.length}</em> 项任务的安排
+          </h2>
+          {plan?.summary&&(
+            <div style={{padding:"10px 14px",background:th.glass1,borderRadius:10,fontSize:12.5,color:th.ink2,lineHeight:1.65,marginBottom:14,borderLeft:`2px solid ${th.accent}`}}>
+              💡 {plan.summary}
+            </div>
+          )}
+        </div>
+
+        {/* 列表 */}
+        <div className="slim-scroll" style={{flex:1,overflowY:"auto",margin:"0 -8px",padding:"0 8px"}}>
+          <div style={{display:"flex",flexDirection:"column",gap:6,position:"relative"}}>
+            {planWithTasks.map((p,i)=>{
+              const c=catOf(p.task.category);
+              return(
+                <div key={p.id} className="glass" style={{padding:"11px 14px",borderRadius:11,borderLeft:`3px solid ${c.color}`,display:"flex",alignItems:"center",gap:10}}>
+                  <input type="time" value={p.time} onChange={e=>updateTime(p.id,e.target.value)} style={{width:90,padding:"6px 8px",borderRadius:8,background:th.glass2,border:`1px solid ${th.glassBorder}`,color:th.ink0,fontSize:13,fontWeight:600,fontVariantNumeric:"tabular-nums",cursor:"pointer"}}/>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:500,color:th.ink0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.task.title}</div>
+                    <div style={{display:"flex",gap:6,marginTop:2,alignItems:"center",flexWrap:"wrap"}}>
+                      <span className="mono" style={{fontSize:9,color:c.color,fontWeight:600}}>{c.glyph} {c.name}</span>
+                      <span className="mono" style={{fontSize:9,color:th.ink3}}>· {p.task.priority}</span>
+                      {p.task.duration&&<span className="mono" style={{fontSize:9,color:th.ink3}}>· {p.task.duration}min</span>}
+                    </div>
+                    <div style={{fontSize:11,color:th.ink2,marginTop:4,lineHeight:1.5}}>💭 {p.reason}</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div style={{display:"flex",gap:8,marginTop:16,flexShrink:0}}>
+          <button onClick={onClose} style={{padding:"11px 18px",borderRadius:11,background:th.glass2,color:th.ink2,fontSize:13,fontWeight:500}}>取消</button>
+          <button onClick={()=>onApply(edited)} style={{flex:1,padding:"11px 18px",borderRadius:11,background:`linear-gradient(135deg,${th.accent},${th.accent3})`,color:"#fff",fontSize:13,fontWeight:600,boxShadow:`0 4px 16px ${th.accent}50`,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+            <Ic n="check" size={13} sw={2.5}/> 应用排期到所有任务
+          </button>
+        </div>
+        <div className="mono" style={{fontSize:9,color:th.ink3,letterSpacing:"0.06em",marginTop:8,textAlign:"center"}}>由 DeepSeek 提供 · 时间可手动调整</div>
+      </div>
+    </div>
+  );
 }
 
 // ═══ JOURNAL MODAL · 一句话日记弹窗 ═══
@@ -2160,7 +2364,7 @@ function PomodoroFullscreen({th,taskId,runningTask,tasks,nowMin,onClose,toggleTi
 
 // ═══ TASKS VIEW (today / tomorrow / week) ═══
 function TasksView(p){
-  const{th,view,filtered,filter,setFilter,cats,quickTitle,setQuickTitle,quickAdd,setShowTaskForm,setShowTemplates,today,tasks,journals,setShowJournalModal}=p;
+  const{th,view,filtered,filter,setFilter,cats,quickTitle,setQuickTitle,quickAdd,setShowTaskForm,setShowTemplates,today,tasks,journals,setShowJournalModal,aiLoading,requestAiPlan}=p;
   // week 视图改用按天分组组件；today / tomorrow 走标准分组展示
   if(view==="week"){
     return<WeekGroupedView {...p}/>;
@@ -2233,7 +2437,13 @@ function TasksView(p){
             <span style={{color:c.color}}>{c.glyph}</span> {c.name} · {n}
           </button>;
         })}
-        <button onClick={()=>setShowTemplates(true)} className="view-tab" style={{flexShrink:0,background:th.accent+"15",color:th.accent2,border:`1px solid ${th.accent}40`,marginLeft:"auto"}}>
+        <div style={{flex:1,minWidth:0}}/>
+        {view==="today"&&(
+          <button onClick={requestAiPlan} disabled={aiLoading} className="view-tab" style={{flexShrink:0,background:`linear-gradient(135deg,${th.accent}25,${th.accent3}25)`,color:th.accent2,border:`1px solid ${th.accent}60`,fontWeight:600,boxShadow:aiLoading?"none":`0 0 12px ${th.accent}40`,opacity:aiLoading?0.7:1,cursor:aiLoading?"wait":"pointer"}} title="AI 智能排期">
+            {aiLoading?<><span className="spin" style={{display:"inline-block"}}>○</span> 思考中</>:<>✨ 智能排期</>}
+          </button>
+        )}
+        <button onClick={()=>setShowTemplates(true)} className="view-tab" style={{flexShrink:0,background:th.accent+"15",color:th.accent2,border:`1px solid ${th.accent}40`}}>
           <Ic n="sparkles" size={11} color={th.accent2}/> 模板
         </button>
       </div>

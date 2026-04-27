@@ -220,9 +220,18 @@ kbd{font-family:var(--f-mono);font-size:10px;padding:1px 5px;border-radius:3px;b
   setTimeout(()=>{const root=document.getElementById('root');if(root&&root.children.length===0&&box.style.display==='none'){const tips=[];if(!window.React)tips.push('❌ React 未加载');if(!window.ReactDOM)tips.push('❌ ReactDOM 未加载');if(!window.Babel)tips.push('❌ Babel 未加载');if(!window.supabase)tips.push('❌ Supabase 未加载 (cdn.jsdelivr.net 可能被墙)');if(window.React&&window.Babel&&window.supabase)tips.push('✓ 依赖都在 · 但渲染失败');show('加载超过 5 秒，页面仍为空',tips.join('\n')||'未知');}},5000);
 })();
 if('serviceWorker' in navigator){
-  const swCode=`const CACHE='tlk-v4';self.addEventListener('install',e=>self.skipWaiting());self.addEventListener('activate',e=>e.waitUntil(clients.claim()));self.addEventListener('fetch',e=>{if(e.request.method!=='GET')return;e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request).then(resp=>{if(resp.ok&&e.request.url.startsWith('http')){const c=resp.clone();caches.open(CACHE).then(ca=>ca.put(e.request,c));}return resp;}).catch(()=>caches.match('/'))));});`;
+  // Network-first 策略：永远先尝试网络，失败时才 fallback 到缓存
+  // 这样部署新版本后用户立刻就能拿到（旧的 cache-first 会让用户卡在旧版）
+  const swCode=`const CACHE='tlk-v5';self.addEventListener('install',e=>self.skipWaiting());self.addEventListener('activate',e=>e.waitUntil((async()=>{const keys=await caches.keys();await Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)));await clients.claim();})()));self.addEventListener('fetch',e=>{if(e.request.method!=='GET')return;e.respondWith(fetch(e.request).then(resp=>{if(resp.ok&&e.request.url.startsWith('http')){const c=resp.clone();caches.open(CACHE).then(ca=>ca.put(e.request,c));}return resp;}).catch(()=>caches.match(e.request).then(r=>r||caches.match('/'))));});`;
   const blob=new Blob([swCode],{type:'application/javascript'});
   navigator.serviceWorker.register(URL.createObjectURL(blob)).catch(()=>{});
+  // 检测到新 SW 后，下次访问立刻刷新（避免旧版 SW 卡死用户）
+  navigator.serviceWorker.addEventListener('controllerchange',()=>{
+    if(window._tlk_reloading)return;
+    window._tlk_reloading=true;
+    console.log('[SW] 新版本已就绪，刷新页面');
+    setTimeout(()=>location.reload(),300);
+  });
 }
 </script>
 <script type="text/babel">
@@ -1616,32 +1625,72 @@ const emptyTask={title:"",content:"",category:"work",priority:"中",due:"",timeS
 
 // ═══ CLOUD SYNC ═══
 async function cloudLoad(userId){try{const{data,error}=await supabase.from("user_data").select("*").eq("user_id",userId).maybeSingle();if(error)throw error;return data;}catch(e){return null;}}
+// 记忆 supabase 中缺失的列（一旦确认就不再尝试发送，避免持续报错）
+let _knownMissingCols=new Set();
 async function cloudSave(userId,p){
   const base={user_id:userId,tasks:p.tasks||[],history:p.history||[],cats:p.cats||DEFAULT_CATEGORIES,trash:p.trash||[],tags:p.tags||[],journals:p.journals||[],theme_id:p.themeId||"aurora",updated_at:new Date().toISOString()};
-  // 完整字段：含 projects + AI 数据
-  const full={...base,projects:p.projects||[],chat_messages:p.chatMessages||[],ai_profile:p.aiProfile||null,ai_insights:p.aiInsights||[],inbox_messages:p.inboxMessages||[]};
-  console.log("[cloudSave] 字段：",{
-    chat:Array.isArray(full.chat_messages)?full.chat_messages.length:"NA",
-    inbox:Array.isArray(full.inbox_messages)?full.inbox_messages.length:"NA",
-    profile:full.ai_profile?"有":"无",
-    insights:Array.isArray(full.ai_insights)?full.ai_insights.length:"NA",
+  // 可选的扩展字段（每个都可能在 supabase 里不存在）
+  const allExtras={
+    projects:p.projects||[],
+    chat_messages:p.chatMessages||[],
+    ai_profile:p.aiProfile||null,
+    ai_insights:p.aiInsights||[],
+    inbox_messages:p.inboxMessages||[],
+  };
+  // 移除已确认缺失的列
+  const extras={};
+  Object.keys(allExtras).forEach(k=>{
+    if(!_knownMissingCols.has(k))extras[k]=allExtras[k];
   });
+  
+  // 第一次尝试
   try{
-    const{error}=await supabase.from("user_data").upsert(full,{onConflict:"user_id"});
-    if(!error){console.log("[cloudSave] ✓ 全字段成功");return{ok:true,partial:false};}
-    console.warn("[cloudSave] 主调用失败：",error.message);
-    // 列不存在时逐级降级
-    const msg=(error.message||"").toLowerCase();
-    if(/chat_messages|ai_profile|ai_insights|inbox_messages|column|schema/i.test(msg)){
-      // 去掉 AI 字段重试
-      const{error:err2}=await supabase.from("user_data").upsert({...base,projects:p.projects||[]},{onConflict:"user_id"});
-      if(!err2){console.warn("[cloudSave] ⚠️ 降级：AI 列不存在，仅同步基础数据");return{ok:true,partial:true,reason:"ai_cols_missing"};}
-      // projects 也不在
-      if(/projects/i.test((err2&&err2.message||"").toLowerCase())){
-        const{error:err3}=await supabase.from("user_data").upsert(base,{onConflict:"user_id"});
-        if(!err3){console.warn("[cloudSave] ⚠️ 二级降级：连 projects 列都没");return{ok:true,partial:true,reason:"projects_col_missing"};}
+    const{error}=await supabase.from("user_data").upsert({...base,...extras},{onConflict:"user_id"});
+    if(!error){
+      if(_knownMissingCols.size>0)console.log("[cloudSave] ✓ 成功（跳过缺失列：",[..._knownMissingCols].join(","),")");
+      else console.log("[cloudSave] ✓ 全字段成功");
+      return{ok:true,partial:_knownMissingCols.size>0};
+    }
+    
+    // 解析报错信息：找出哪些列不存在
+    const errMsg=(error.message||"").toLowerCase();
+    const knownExtraFields=Object.keys(extras);
+    const newlyMissing=knownExtraFields.filter(f=>errMsg.includes(f));
+    
+    if(newlyMissing.length>0){
+      // 记忆这些缺失的列（避免下次再发）
+      newlyMissing.forEach(f=>_knownMissingCols.add(f));
+      console.warn("[cloudSave] 检测到缺失列（已记忆，下次跳过）：",newlyMissing);
+      // 重试：去掉刚发现的缺失列
+      const surviving={...extras};
+      newlyMissing.forEach(f=>delete surviving[f]);
+      const{error:err2}=await supabase.from("user_data").upsert({...base,...surviving},{onConflict:"user_id"});
+      if(!err2){
+        console.log("[cloudSave] ✓ 部分同步成功（已跳过缺失列）");
+        return{ok:true,partial:true};
+      }
+      // 再次失败：还有别的列没识别
+      const errMsg2=(err2.message||"").toLowerCase();
+      const moreMissing=Object.keys(surviving).filter(f=>errMsg2.includes(f));
+      if(moreMissing.length>0){
+        moreMissing.forEach(f=>_knownMissingCols.add(f));
+        const finalSurviving={...surviving};
+        moreMissing.forEach(f=>delete finalSurviving[f]);
+        const{error:err3}=await supabase.from("user_data").upsert({...base,...finalSurviving},{onConflict:"user_id"});
+        if(!err3){
+          console.log("[cloudSave] ✓ 二级降级成功");
+          return{ok:true,partial:true};
+        }
       }
     }
+    
+    // 终极降级
+    const{error:errBase}=await supabase.from("user_data").upsert(base,{onConflict:"user_id"});
+    if(!errBase){
+      console.log("[cloudSave] ✓ 仅 base 成功");
+      return{ok:true,partial:true};
+    }
+    console.error("[cloudSave] 完全失败：",errBase);
     return{ok:false};
   }catch(e){console.error("[cloudSave] 异常",e);return{ok:false};}
 }
@@ -3820,6 +3869,13 @@ function InboxView({th,today,showToast,user}){
   const[selectedId,setSelectedId]=useState(null);
   const[filter,setFilter]=useState("all"); // all/unread/starred/coach/reporter/strategist/mentor
   const[searchQ,setSearchQ]=useState("");
+  // 检测移动端宽度（< 760px 视为手机）
+  const[isMobile,setIsMobile]=useState(()=>typeof window!=="undefined"&&window.innerWidth<760);
+  useEffect(()=>{
+    const onResize=()=>setIsMobile(window.innerWidth<760);
+    window.addEventListener("resize",onResize);
+    return()=>window.removeEventListener("resize",onResize);
+  },[]);
   
   // 监听 inbox 变化（其他地方添加新邮件时实时刷新）
   useEffect(()=>{
@@ -3981,10 +4037,10 @@ function InboxView({th,today,showToast,user}){
         ))}
       </div>
       
-      {/* 列表 + 详情布局（双栏） */}
-      <div style={{display:"grid",gridTemplateColumns:selected?"minmax(300px,400px) 1fr":"1fr",gap:14,minHeight:"60vh"}}>
-        {/* 邮件列表 */}
-        <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:"75vh",overflowY:"auto",paddingRight:4}} className="slim-scroll">
+      {/* 列表 + 详情布局：桌面端双栏 / 手机端单栏切换 */}
+      <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":(selected?"minmax(300px,400px) 1fr":"1fr"),gap:14,minHeight:"60vh"}}>
+        {/* 邮件列表 - 手机端选中时隐藏 */}
+        {!(isMobile&&selected)&&<div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:isMobile?"none":"75vh",overflowY:"auto",paddingRight:4}} className="slim-scroll">
           {filtered.length===0&&(
             <div style={{padding:"60px 20px",textAlign:"center",color:th.ink3}}>
               <div style={{fontSize:48,marginBottom:14,opacity:.4}}>📭</div>
@@ -4036,11 +4092,16 @@ function InboxView({th,today,showToast,user}){
               </div>
             );
           })}
-        </div>
+        </div>}
         
         {/* 邮件详情 */}
         {selected&&(
-          <div className="glass slideUp" style={{borderRadius:16,padding:0,maxHeight:"75vh",overflow:"hidden",display:"flex",flexDirection:"column"}}>
+          <div className="glass slideUp" style={{borderRadius:isMobile?12:16,padding:0,maxHeight:isMobile?"none":"75vh",overflow:"hidden",display:"flex",flexDirection:"column"}}>
+            {isMobile&&(
+              <button onClick={()=>setSelectedId(null)} className="hover-lift" style={{display:"flex",alignItems:"center",gap:6,padding:"10px 14px",margin:"6px 6px 0",background:th.glass2,borderRadius:9,fontSize:12,color:th.ink1,fontWeight:500,width:"fit-content"}}>
+                ← 返回收件箱
+              </button>
+            )}
             {/* 详情顶部 */}
             <InboxMessageDetail th={th} msg={selected} sender={senderInfo(selected.from)} onClose={()=>setSelectedId(null)} onStar={()=>toggleStar(selected.id)} onArchive={()=>archiveMsg(selected.id)} onDelete={()=>deleteMsg(selected.id)} onExportMd={()=>exportMd(selected)} onCopy={()=>copyContent(selected)} mailtoLink={mailtoLink(selected)}/>
           </div>
@@ -4438,25 +4499,44 @@ function renderMessageAsMarkdown(msg,sender){
   return lines.join("\n");
 }
 
-function AssistantView({th,tasks,setTasks,projects,cats,catOf,tags,journals,today,displayName,nextSortKey,showToast,emptyTask,setTrash}){
+function AssistantView({th,tasks,setTasks,projects,cats,catOf,tags,journals,today,displayName,nextSortKey,showToast,emptyTask,setTrash,user}){
   const[messages,setMessages]=useState(()=>{
-    try{const r=localStorage.getItem("tlk_chat_v1");if(r)return JSON.parse(r);}catch{}
+    try{
+      const r=localStorage.getItem("tlk_chat_v1");
+      if(r){
+        const arr=JSON.parse(r);
+        console.log("[AssistantView] 初始化：从 localStorage 读到",arr.length,"条消息");
+        return arr;
+      }
+    }catch(e){console.warn("[AssistantView] 初始化读 localStorage 失败",e);}
+    console.log("[AssistantView] 初始化：localStorage 为空");
     return[];
   });
   const[input,setInput]=useState("");
   const[loading,setLoading]=useState(false);
   const[attachedFiles,setAttachedFiles]=useState([]); // [{name,text,size}]
   const[parsing,setParsing]=useState(false);
+  const[syncing,setSyncing]=useState(false);
   const[confirmAction,setConfirmAction]=useState(null); // {desc, run, args}
   const fileInputRef=useRef(null);
   const scrollRef=useRef(null);
+  // 防循环：标记是不是从云端 sync 过来的写入（这种写入不应该再触发上传）
+  const fromCloudRef=useRef(false);
   
   // 持久化对话 + 通知 MainApp 触发云同步
   useEffect(()=>{
+    if(fromCloudRef.current){
+      // 来自云端的更新，不再上传
+      fromCloudRef.current=false;
+      console.log("[AssistantView] 从云端的写入，跳过本地→云上传");
+      return;
+    }
     try{
-      localStorage.setItem("tlk_chat_v1",JSON.stringify(messages.slice(-30)));
+      const data=messages.slice(-30);
+      localStorage.setItem("tlk_chat_v1",JSON.stringify(data));
       window.dispatchEvent(new Event("tlk_chat_changed"));
-    }catch{}
+      console.log("[AssistantView] 写入 localStorage："+data.length+" 条 → 触发 tlk_chat_changed");
+    }catch(e){console.warn("[AssistantView] 写入 localStorage 失败",e);}
   },[messages]);
   
   // 监听云端推过来的最新对话（来自其他设备的更新）
@@ -4470,14 +4550,55 @@ function AssistantView({th,tasks,setTasks,projects,cats,catOf,tags,journals,toda
           const localLast=messages.length>0?messages[messages.length-1]?.ts||0:0;
           const cloudLast=cloud.length>0?cloud[cloud.length-1]?.ts||0:0;
           if(cloud.length!==messages.length||cloudLast>localLast){
+            console.log("[AssistantView] 收到 tlk_chat_synced，云端比本地新，更新："+cloud.length+" 条");
+            fromCloudRef.current=true; // 防循环
             setMessages(cloud);
+          }else{
+            console.log("[AssistantView] 收到 tlk_chat_synced，但本地更新或一致，跳过");
           }
         }
-      }catch{}
+      }catch(e){console.warn("[AssistantView] onSynced 失败",e);}
     };
     window.addEventListener("tlk_chat_synced",onSynced);
     return()=>window.removeEventListener("tlk_chat_synced",onSynced);
   },[messages]);
+  
+  // 手动同步：从云端拉最新对话
+  const manualSync=async()=>{
+    if(!user||syncing)return;
+    setSyncing(true);
+    showToast&&showToast("正在拉取云端对话...","info");
+    try{
+      const cloud=await cloudLoad(user.id);
+      console.log("[AssistantView] 手动同步：cloudLoad 返回",cloud?{has:true,chatLen:cloud.chat_messages?.length||0,updatedAt:cloud.updated_at}:"null");
+      if(!cloud){
+        showToast&&showToast("云端无数据","info");
+      }else if(!Array.isArray(cloud.chat_messages)){
+        showToast&&showToast("云端 chat 字段未启用","error");
+      }else{
+        const cloudArr=cloud.chat_messages;
+        const cloudLastTs=cloudArr.length>0?(cloudArr[cloudArr.length-1]?.ts||0):0;
+        const localLastTs=messages.length>0?(messages[messages.length-1]?.ts||0):0;
+        console.log("[AssistantView] 比较：本地",messages.length,"条 lastTs=",localLastTs,"vs 云端",cloudArr.length,"条 lastTs=",cloudLastTs);
+        if(cloudArr.length===0&&messages.length===0){
+          showToast&&showToast("两边都是空的","info");
+        }else if(cloudLastTs>localLastTs||cloudArr.length>messages.length){
+          fromCloudRef.current=true;
+          setMessages(cloudArr);
+          localStorage.setItem("tlk_chat_v1",JSON.stringify(cloudArr));
+          showToast&&showToast(`✓ 拉到 ${cloudArr.length} 条对话`,"success");
+        }else if(cloudArr.length<messages.length){
+          showToast&&showToast(`本地已更新（本地 ${messages.length} > 云端 ${cloudArr.length}）`,"info");
+        }else{
+          showToast&&showToast("已是最新","success");
+        }
+      }
+    }catch(e){
+      console.error("[AssistantView] 手动同步失败",e);
+      showToast&&showToast("同步失败: "+e.message,"error");
+    }
+    setSyncing(false);
+  };
   
   // 自动滚到底部
   useEffect(()=>{
@@ -4669,6 +4790,9 @@ function AssistantView({th,tasks,setTasks,projects,cats,catOf,tags,journals,toda
           <div className="display" style={{fontSize:22,color:th.ink0,letterSpacing:"-0.02em",fontWeight:700}}>AI 助手</div>
           <div style={{fontSize:11,color:th.ink2,marginTop:1}}>{messages.length>0?`${messages.length} 条对话`:"问我任何关于任务、计划、效率的问题"}</div>
         </div>
+        <button onClick={manualSync} disabled={syncing} className="glass" title="从云端拉取最新对话" style={{padding:"7px 12px",borderRadius:9,fontSize:11,color:th.ink2,display:"flex",alignItems:"center",gap:4,opacity:syncing?0.5:1}}>
+          {syncing?<span className="spin">○</span>:<Ic n="repeat" size={11} color={th.ink2}/>} 同步
+        </button>
         {messages.length>0&&<button onClick={clearChat} className="glass" style={{padding:"7px 12px",borderRadius:9,fontSize:11,color:th.ink2,display:"flex",alignItems:"center",gap:4}}><Ic n="trash" size={11} color={th.ink2}/> 清空</button>}
       </div>
 

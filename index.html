@@ -75,6 +75,11 @@ kbd{font-family:var(--f-mono);font-size:10px;padding:1px 5px;border-radius:3px;b
 @keyframes orbA{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(60px,40px) scale(1.15)}}
 @keyframes orbB{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(-50px,-40px) scale(1.2)}}
 @keyframes orbC{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(-80px,60px) scale(0.9)}}
+@keyframes orbDrift{0%,100%{transform:translate(0,0) scale(1)}33%{transform:translate(40px,-30px) scale(1.1)}66%{transform:translate(-30px,40px) scale(0.95)}}
+@keyframes orbDrift2{0%,100%{transform:translate(0,0) scale(1)}33%{transform:translate(-50px,-40px) scale(1.15)}66%{transform:translate(40px,30px) scale(0.9)}}
+@keyframes orbDrift3{0%,100%{transform:translate(0,0) scale(1)}33%{transform:translate(60px,40px) scale(0.92)}66%{transform:translate(-40px,-50px) scale(1.1)}}
+@keyframes fadeInUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+@keyframes shimmerGrad{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}
 
 .checkAnim{animation:popCheck 0.34s var(--ease)}
 .toast{animation:toastIn 0.28s var(--ease)}
@@ -160,7 +165,37 @@ kbd{font-family:var(--f-mono);font-size:10px;padding:1px 5px;border-radius:3px;b
 </style>
 </head>
 <body>
-<div id="root"></div>
+<div id="root"><div id="initial-splash" style="position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding-bottom:18vh;background:#0a0814;font-family:'Instrument Serif','Noto Serif SC',Georgia,serif;color:#fff;z-index:99998;animation:splashFadeIn 0.4s ease-out">
+  <style>
+    @keyframes splashFadeIn{from{opacity:0}to{opacity:1}}
+    @keyframes splashOrbA{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(30px,-20px) scale(1.15)}}
+    @keyframes splashOrbB{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(-25px,20px) scale(1.1)}}
+    @keyframes splashShimmer{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}
+    @keyframes splashDot{0%,80%,100%{transform:scale(0.5);opacity:0.3}40%{transform:scale(1);opacity:1}}
+    @keyframes splashUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+    #initial-splash .splash-center{display:flex;flex-direction:column;align-items:center;position:relative;z-index:2}
+    #initial-splash .splash-logo{font-size:78px;letter-spacing:-0.05em;line-height:1;font-weight:700;display:flex;align-items:baseline;gap:1px;animation:splashUp 0.9s 0.1s var(--ease,cubic-bezier(0.22,1,0.36,1)) both}
+    #initial-splash .splash-logo .a{color:#fff}
+    #initial-splash .splash-logo .b{font-style:italic;font-weight:400;background:linear-gradient(90deg,#6d5fff 0%,#ec4899 50%,#22d3ee 100%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;background-size:200% auto;animation:splashShimmer 5s ease-in-out infinite,splashUp 0.9s 0.1s cubic-bezier(0.22,1,0.36,1) both;padding-right:0.06em}
+    #initial-splash .splash-tagline{font-family:'JetBrains Mono','SF Mono',ui-monospace,monospace;font-size:11px;color:#9890c4;letter-spacing:0.22em;margin-top:18px;font-weight:400;animation:splashUp 1s 0.35s cubic-bezier(0.22,1,0.36,1) both}
+    #initial-splash .splash-orb{position:absolute;border-radius:50%;filter:blur(60px);pointer-events:none;z-index:1}
+    #initial-splash .splash-orb.a{top:18%;left:25%;width:340px;height:340px;background:radial-gradient(circle,rgba(109,95,255,0.5),transparent 70%);animation:splashOrbA 7s ease-in-out infinite}
+    #initial-splash .splash-orb.b{bottom:22%;right:22%;width:300px;height:300px;background:radial-gradient(circle,rgba(236,72,153,0.45),transparent 70%);animation:splashOrbB 8s ease-in-out infinite -3s}
+    #initial-splash .splash-orb.c{top:45%;left:50%;transform:translateX(-50%);width:260px;height:260px;background:radial-gradient(circle,rgba(34,211,238,0.25),transparent 70%);animation:splashOrbA 9s ease-in-out infinite -1s}
+    #initial-splash .splash-dots{display:flex;gap:7px;margin-top:46px;animation:splashUp 1s 0.5s cubic-bezier(0.22,1,0.36,1) both}
+    #initial-splash .splash-dots span{width:6px;height:6px;border-radius:50%;background:linear-gradient(135deg,#6d5fff,#ec4899);box-shadow:0 0 10px rgba(109,95,255,0.5);animation:splashDot 1.4s ease-in-out infinite}
+    #initial-splash .splash-dots span:nth-child(2){animation-delay:0.18s;background:linear-gradient(135deg,#ec4899,#22d3ee)}
+    #initial-splash .splash-dots span:nth-child(3){animation-delay:0.36s;background:linear-gradient(135deg,#22d3ee,#6d5fff)}
+  </style>
+  <div class="splash-orb a"></div>
+  <div class="splash-orb b"></div>
+  <div class="splash-orb c"></div>
+  <div class="splash-center">
+    <div class="splash-logo"><span class="a">Time</span><span class="b">linek</span></div>
+    <div class="splash-tagline">YOUR PERSONAL AI WORKSPACE</div>
+    <div class="splash-dots"><span></span><span></span><span></span></div>
+  </div>
+</div></div>
 <div id="errbox" style="display:none;position:fixed;inset:20px;z-index:99999;background:#fff5f5;border:2px solid #ff5a5f;border-radius:12px;padding:20px;overflow:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;color:#0a0a0a;line-height:1.65"></div>
 <script>
 // ═══ PWA 初始化：动态生成 manifest + PNG icons ═══
@@ -1892,101 +1927,128 @@ function AuthScreen(){
     }catch(err){setMsg("err:"+(err.message||"操作失败"));}
     setLoading(false);
   };
-  // Paper Garden 配色：温暖米白 + 麦黄 + 植物绿 + 锈红 emphasis
-  const PG={
-    bg:"#f5f1e8", // 米白纸色
-    paper:"#fbf8ef", // 浅纸面
-    ink0:"#3d3528", // 深褐墨
-    ink1:"#5d533f", 
-    ink2:"#8a7d65",
-    ink3:"#b8aa8c",
-    border:"rgba(61,53,40,0.12)",
-    borderStrong:"rgba(61,53,40,0.22)",
-    accent:"#7a8c5c", // 植物绿
-    accent2:"#b59a4a", // 麦黄
-    accent3:"#a85a3c", // 锈红
-    glow:"rgba(122,140,92,0.15)",
+  
+  // 鼠标视差光效
+  const[parallax,setParallax]=useState({x:50,y:50});
+  const onMouse=(e)=>{
+    const rect=e.currentTarget.getBoundingClientRect();
+    setParallax({
+      x:((e.clientX-rect.left)/rect.width)*100,
+      y:((e.clientY-rect.top)/rect.height)*100,
+    });
   };
-  const inpS={width:"100%",padding:"14px 16px",border:`1.5px solid ${PG.border}`,borderRadius:12,fontSize:14,outline:"none",background:"#fff",color:PG.ink0,transition:"all 0.18s",letterSpacing:"0.01em",fontFamily:"inherit"};
+  
+  const inpS={
+    width:"100%",
+    padding:"15px 18px",
+    border:"1.5px solid rgba(20,18,38,0.08)",
+    borderRadius:13,
+    fontSize:14.5,
+    outline:"none",
+    background:"rgba(255,255,255,0.7)",
+    color:"#1a1530",
+    transition:"all 0.2s var(--ease)",
+    letterSpacing:"0.01em",
+    fontFamily:"inherit",
+    backdropFilter:"blur(8px)",
+    WebkitBackdropFilter:"blur(8px)",
+  };
+  
   return(
-    <div style={{minHeight:"100vh",background:PG.bg,display:"flex",alignItems:"center",justifyContent:"center",padding:20,position:"relative",color:PG.ink0,overflow:"hidden"}}>
-      {/* 纸质背景纹理 */}
-      <div style={{position:"absolute",inset:0,opacity:0.5,backgroundImage:`radial-gradient(${PG.ink3} 0.5px,transparent 0.5px)`,backgroundSize:"24px 24px",pointerEvents:"none"}}/>
+    <div onMouseMove={onMouse} style={{minHeight:"100vh",background:"linear-gradient(180deg,#fafaff 0%,#f4f0ff 50%,#fff5f9 100%)",display:"flex",alignItems:"center",justifyContent:"center",padding:20,position:"relative",color:"#1a1530",overflow:"hidden",fontFamily:"inherit"}}>
+      {/* 鼠标视差光团（柔和） */}
+      <div style={{position:"absolute",inset:0,background:`radial-gradient(circle at ${parallax.x}% ${parallax.y}%, rgba(109,95,255,0.16), transparent 50%), radial-gradient(circle at ${100-parallax.x}% ${100-parallax.y}%, rgba(236,72,153,0.13), transparent 55%), radial-gradient(circle at 80% 20%, rgba(34,211,238,0.1), transparent 50%)`,transition:"background 0.4s ease",pointerEvents:"none"}}/>
       
-      {/* SVG 装饰：花园元素（左下角植物 + 右上角太阳）*/}
-      <svg style={{position:"absolute",bottom:-40,left:-40,width:340,height:340,opacity:0.32,pointerEvents:"none"}} viewBox="0 0 340 340" fill="none">
-        {/* 远景树 */}
-        <ellipse cx="200" cy="280" rx="80" ry="14" fill={PG.accent} opacity="0.3"/>
-        <path d="M 130 260 Q 130 180 100 160 Q 70 180 70 260" stroke={PG.accent} strokeWidth="1.5" fill={PG.accent} fillOpacity="0.18"/>
-        <path d="M 100 260 L 100 220" stroke={PG.ink1} strokeWidth="1" opacity="0.4"/>
-        {/* 草丛 */}
-        <path d="M 40 280 Q 50 230 60 280" stroke={PG.accent} strokeWidth="1.5" fill="none"/>
-        <path d="M 65 280 Q 75 240 85 280" stroke={PG.accent} strokeWidth="1.5" fill="none"/>
-        <path d="M 95 280 Q 105 250 115 280" stroke={PG.accent} strokeWidth="1.2" fill="none"/>
-        {/* 花朵 */}
-        <g opacity="0.7">
-          <circle cx="160" cy="240" r="3" fill={PG.accent3}/>
-          <circle cx="155" cy="244" r="3" fill={PG.accent3} opacity="0.8"/>
-          <circle cx="165" cy="244" r="3" fill={PG.accent3} opacity="0.8"/>
-          <circle cx="160" cy="248" r="3" fill={PG.accent3} opacity="0.8"/>
-          <circle cx="160" cy="244" r="2" fill={PG.accent2}/>
-          <line x1="160" y1="248" x2="160" y2="270" stroke={PG.accent} strokeWidth="1"/>
-        </g>
-        <g opacity="0.6">
-          <circle cx="220" cy="250" r="2.5" fill={PG.accent2}/>
-          <circle cx="215" cy="253" r="2.5" fill={PG.accent2} opacity="0.7"/>
-          <circle cx="225" cy="253" r="2.5" fill={PG.accent2} opacity="0.7"/>
-          <line x1="220" y1="255" x2="220" y2="275" stroke={PG.accent} strokeWidth="1"/>
-        </g>
-      </svg>
-      <svg style={{position:"absolute",top:-30,right:-30,width:260,height:260,opacity:0.24,pointerEvents:"none"}} viewBox="0 0 260 260" fill="none">
-        {/* 太阳 */}
-        <circle cx="200" cy="60" r="32" fill={PG.accent2} opacity="0.4"/>
-        <circle cx="200" cy="60" r="20" fill={PG.accent2}/>
-        {/* 鸟 */}
-        <path d="M 100 80 Q 110 70 120 80 M 120 80 Q 130 70 140 80" stroke={PG.ink1} strokeWidth="1.5" fill="none"/>
-        <path d="M 60 110 Q 70 100 80 110" stroke={PG.ink1} strokeWidth="1.2" fill="none" opacity="0.6"/>
-        {/* 云 */}
-        <path d="M 30 50 Q 40 40 55 45 Q 65 40 75 50 Q 85 45 90 55 Q 75 60 30 55 Z" fill={PG.ink1} opacity="0.15"/>
-      </svg>
+      {/* 漂浮光球 1 - 紫 */}
+      <div style={{position:"absolute",top:"-10%",right:"-10%",width:520,height:520,borderRadius:"50%",background:"radial-gradient(circle,rgba(109,95,255,0.3),transparent 65%)",filter:"blur(70px)",animation:"orbDrift 18s ease-in-out infinite",pointerEvents:"none"}}/>
+      {/* 漂浮光球 2 - 粉 */}
+      <div style={{position:"absolute",bottom:"-15%",left:"-10%",width:600,height:600,borderRadius:"50%",background:"radial-gradient(circle,rgba(236,72,153,0.22),transparent 70%)",filter:"blur(80px)",animation:"orbDrift2 22s ease-in-out infinite",pointerEvents:"none"}}/>
+      {/* 漂浮光球 3 - 青 */}
+      <div style={{position:"absolute",top:"40%",left:"30%",width:340,height:340,borderRadius:"50%",background:"radial-gradient(circle,rgba(34,211,238,0.18),transparent 65%)",filter:"blur(65px)",animation:"orbDrift3 28s ease-in-out infinite",pointerEvents:"none"}}/>
+      
+      {/* 装饰性顶部细线 */}
+      <div style={{position:"absolute",top:0,left:0,right:0,height:1,background:"linear-gradient(90deg,transparent,rgba(109,95,255,0.4),rgba(236,72,153,0.4),transparent)",pointerEvents:"none"}}/>
 
       <div style={{width:"100%",maxWidth:440,position:"relative",zIndex:10}}>
-        {/* Logo */}
-        <div style={{textAlign:"center",marginBottom:36}}>
-          <h1 className="display" style={{fontSize:88,letterSpacing:"-0.05em",lineHeight:1,marginBottom:14,whiteSpace:"nowrap",fontWeight:700}}>
-            <span style={{color:PG.ink0}}>Time</span>
-            <em style={{fontStyle:"italic",fontWeight:400,color:PG.accent3,paddingRight:"0.1em"}}>linek</em>
+        {/* Logo + 标题 */}
+        <div style={{textAlign:"center",marginBottom:42,animation:"fadeInUp 0.8s var(--ease)"}}>
+          {/* 小图标 */}
+          <div style={{display:"inline-flex",alignItems:"center",gap:10,padding:"6px 14px",borderRadius:30,background:"rgba(255,255,255,0.7)",border:"1px solid rgba(109,95,255,0.2)",marginBottom:24,backdropFilter:"blur(10px)",boxShadow:"0 2px 12px rgba(109,95,255,0.08)"}}>
+            <span style={{width:6,height:6,borderRadius:"50%",background:"#6d5fff",boxShadow:"0 0 10px #6d5fff",animation:"pulseGlow 2s infinite"}}/>
+            <span className="mono" style={{fontSize:11,color:"#6d5fff",letterSpacing:"0.18em",fontWeight:600}}>YOUR PERSONAL AI WORKSPACE</span>
+          </div>
+          {/* 主标题 */}
+          <h1 className="display" style={{fontSize:78,letterSpacing:"-0.05em",lineHeight:1,marginBottom:18,whiteSpace:"nowrap",fontWeight:700,position:"relative"}}>
+            <span style={{color:"#1a1530"}}>Time</span>
+            <em style={{fontStyle:"italic",fontWeight:400,background:"linear-gradient(135deg,#6d5fff 0%,#ec4899 50%,#22d3ee 100%)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",backgroundClip:"text",paddingRight:"0.06em",animation:"shimmerGrad 6s ease-in-out infinite",backgroundSize:"200% auto"}}>linek</em>
           </h1>
-          <p style={{fontSize:15,color:PG.ink1,letterSpacing:"0.04em",fontWeight:500}}>专注当下 · 规划未来</p>
+          <p style={{fontSize:14,color:"#6b6390",letterSpacing:"0.16em",fontWeight:400}}>专注当下 <span style={{margin:"0 8px",opacity:.4}}>·</span> 规划未来</p>
         </div>
 
-        {/* 卡片 */}
-        <div style={{borderRadius:20,padding:"36px 32px 30px",background:PG.paper,border:`1.5px solid ${PG.border}`,boxShadow:`0 1px 0 rgba(255,255,255,0.6) inset, 0 16px 48px rgba(61,53,40,0.1), 0 2px 6px rgba(61,53,40,0.05)`,position:"relative"}}>
-          <h2 className="display" style={{fontSize:30,color:PG.ink0,marginBottom:8,letterSpacing:"-0.02em",fontWeight:700}}>
-            {mode==="login"?<>欢迎<em style={{fontStyle:"italic",color:PG.accent3}}>回来</em></>:<>开启<em style={{fontStyle:"italic",color:PG.accent3}}>新篇</em></>}
+        {/* 表单卡片 - 浅白玻璃 */}
+        <div style={{borderRadius:22,padding:"34px 32px 28px",position:"relative",background:"rgba(255,255,255,0.75)",border:"1px solid rgba(109,95,255,0.1)",boxShadow:"0 1px 0 rgba(255,255,255,0.8) inset, 0 24px 64px rgba(109,95,255,0.12), 0 1px 4px rgba(0,0,0,0.04)",backdropFilter:"blur(24px) saturate(180%)",WebkitBackdropFilter:"blur(24px) saturate(180%)",animation:"fadeInUp 0.9s 0.15s var(--ease) backwards"}}>
+          {/* 卡片顶部彩边 */}
+          <div style={{position:"absolute",top:0,left:24,right:24,height:1,background:"linear-gradient(90deg,transparent,rgba(109,95,255,0.5),rgba(236,72,153,0.5),transparent)",pointerEvents:"none"}}/>
+          
+          {/* Tab 切换 */}
+          <div style={{display:"flex",gap:0,marginBottom:24,borderRadius:11,padding:3,background:"rgba(109,95,255,0.05)",border:"1px solid rgba(109,95,255,0.08)"}}>
+            {[["login","登录"],["signup","注册"]].map(([k,v])=>(
+              <button key={k} type="button" onClick={()=>{setMode(k);setMsg("");}} style={{flex:1,padding:"9px 0",borderRadius:9,fontSize:13,fontWeight:mode===k?600:500,color:mode===k?"#fff":"#6b6390",background:mode===k?"linear-gradient(135deg,#6d5fff,#9333ea)":"transparent",border:mode===k?"1px solid rgba(109,95,255,0.6)":"1px solid transparent",boxShadow:mode===k?"0 4px 14px rgba(109,95,255,0.35)":"none",letterSpacing:"0.04em",transition:"all 0.2s var(--ease)"}}>{v}</button>
+            ))}
+          </div>
+
+          <h2 className="display" style={{fontSize:26,color:"#1a1530",marginBottom:6,letterSpacing:"-0.02em",fontWeight:700,lineHeight:1.2}}>
+            {mode==="login"?<>欢迎<em style={{fontStyle:"italic",fontWeight:400,background:"linear-gradient(135deg,#6d5fff,#ec4899)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",backgroundClip:"text"}}>回来</em></>:<>开启<em style={{fontStyle:"italic",fontWeight:400,background:"linear-gradient(135deg,#6d5fff,#ec4899)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",backgroundClip:"text"}}>新篇</em></>}
           </h2>
-          <p style={{fontSize:14,color:PG.ink2,marginBottom:26,letterSpacing:"0.01em"}}>
-            {mode==="login"?"继续你的任务计划":"创建账户开始使用"}
+          <p style={{fontSize:13,color:"#7a73a3",marginBottom:24,letterSpacing:"0.02em"}}>
+            {mode==="login"?"登录账户继续你的规划":"创建账户开始全新体验"}
           </p>
 
           <form onSubmit={submit}>
-            <div style={{marginBottom:14}}>
-              <input value={username} onChange={e=>setUsername(e.target.value)} type="text" placeholder="账户名" autoComplete="username" maxLength={32} style={{...inpS,fontSize:15,padding:"15px 18px"}} onFocus={e=>{e.target.style.borderColor=PG.accent;e.target.style.boxShadow=`0 0 0 3px ${PG.glow}`;}} onBlur={e=>{e.target.style.borderColor=PG.border;e.target.style.boxShadow="none";}}/>
-              {mode==="signup"&&username.length>0&&!usernameValid&&<div style={{fontSize:12,color:PG.accent3,marginTop:8,paddingLeft:4}}>账户名至少 2 个字符</div>}
+            <div style={{marginBottom:14,position:"relative"}}>
+              <div style={{position:"absolute",left:15,top:"50%",transform:"translateY(-50%)",pointerEvents:"none",opacity:.55,zIndex:1}}>
+                <Ic n="user" size={15} color="#7a73a3"/>
+              </div>
+              <input value={username} onChange={e=>setUsername(e.target.value)} type="text" placeholder="账户名（至少 2 个字符）" autoComplete="username" maxLength={32} style={{...inpS,paddingLeft:42}} onFocus={e=>{e.target.style.borderColor="rgba(109,95,255,0.55)";e.target.style.boxShadow="0 0 0 4px rgba(109,95,255,0.1),0 4px 16px rgba(109,95,255,0.12)";e.target.style.background="rgba(255,255,255,0.95)";}} onBlur={e=>{e.target.style.borderColor="rgba(20,18,38,0.08)";e.target.style.boxShadow="none";e.target.style.background="rgba(255,255,255,0.7)";}}/>
+              {mode==="signup"&&username.length>0&&!usernameValid&&<div style={{fontSize:11.5,color:"#e11d48",marginTop:6,paddingLeft:4,letterSpacing:"0.02em"}}>账户名至少 2 个字符</div>}
             </div>
-            <div style={{marginBottom:24}}>
-              <input value={password} onChange={e=>setPassword(e.target.value)} type="password" placeholder="密码" autoComplete={mode==="login"?"current-password":"new-password"} style={{...inpS,fontSize:15,padding:"15px 18px"}} onFocus={e=>{e.target.style.borderColor=PG.accent;e.target.style.boxShadow=`0 0 0 3px ${PG.glow}`;}} onBlur={e=>{e.target.style.borderColor=PG.border;e.target.style.boxShadow="none";}}/>
-              {mode==="signup"&&password.length>0&&!passwordValid&&<div style={{fontSize:12,color:PG.accent3,marginTop:8,paddingLeft:4}}>密码至少 6 位</div>}
+            <div style={{marginBottom:24,position:"relative"}}>
+              <div style={{position:"absolute",left:15,top:"50%",transform:"translateY(-50%)",pointerEvents:"none",opacity:.55,zIndex:1}}>
+                <Ic n="settings" size={15} color="#7a73a3"/>
+              </div>
+              <input value={password} onChange={e=>setPassword(e.target.value)} type="password" placeholder="密码（至少 6 位）" autoComplete={mode==="login"?"current-password":"new-password"} style={{...inpS,paddingLeft:42}} onFocus={e=>{e.target.style.borderColor="rgba(109,95,255,0.55)";e.target.style.boxShadow="0 0 0 4px rgba(109,95,255,0.1),0 4px 16px rgba(109,95,255,0.12)";e.target.style.background="rgba(255,255,255,0.95)";}} onBlur={e=>{e.target.style.borderColor="rgba(20,18,38,0.08)";e.target.style.boxShadow="none";e.target.style.background="rgba(255,255,255,0.7)";}}/>
+              {mode==="signup"&&password.length>0&&!passwordValid&&<div style={{fontSize:11.5,color:"#e11d48",marginTop:6,paddingLeft:4,letterSpacing:"0.02em"}}>密码至少 6 位</div>}
             </div>
-            <button type="submit" disabled={!canSubmit} style={{width:"100%",padding:"15px",background:canSubmit?`linear-gradient(135deg,${PG.accent} 0%,${PG.accent2} 100%)`:"#e8e2d3",color:canSubmit?"#fff":PG.ink3,borderRadius:12,fontSize:15,fontWeight:700,letterSpacing:"0.04em",transition:"all 0.2s var(--ease)",boxShadow:canSubmit?`0 8px 24px ${PG.accent}50`:"none",cursor:canSubmit?"pointer":"not-allowed"}}>
-              {loading?<span className="spin">○</span>:mode==="login"?"登 录":"创 建 账 户"}
+            <button type="submit" disabled={!canSubmit} style={{width:"100%",padding:"15px",background:canSubmit?"linear-gradient(135deg,#6d5fff 0%,#9333ea 50%,#ec4899 100%)":"rgba(109,95,255,0.08)",color:canSubmit?"#fff":"#a8a0d6",borderRadius:12,fontSize:14.5,fontWeight:700,letterSpacing:"0.06em",transition:"all 0.25s var(--ease)",boxShadow:canSubmit?"0 8px 24px rgba(109,95,255,0.35),0 1px 0 rgba(255,255,255,0.2) inset":"none",cursor:canSubmit?"pointer":"not-allowed",position:"relative",overflow:"hidden",backgroundSize:"200% auto"}} onMouseEnter={e=>{if(canSubmit)e.target.style.backgroundPosition="right center";}} onMouseLeave={e=>{if(canSubmit)e.target.style.backgroundPosition="left center";}}>
+              {loading?<span className="spin" style={{display:"inline-block"}}>○</span>:mode==="login"?"登 录":"创 建 账 户"}
             </button>
           </form>
-          {msg&&<div className="fadeIn" style={{marginTop:16,padding:"12px 16px",background:msg.startsWith("err")?"rgba(168,90,60,0.08)":"rgba(122,140,92,0.1)",color:msg.startsWith("err")?PG.accent3:PG.accent,fontSize:13,borderRadius:10,lineHeight:1.6,border:`1px solid ${msg.startsWith("err")?"rgba(168,90,60,0.2)":"rgba(122,140,92,0.2)"}`}}>{msg.slice(4)}</div>}
-          <div style={{marginTop:24,paddingTop:20,borderTop:`1px solid ${PG.border}`,textAlign:"center",fontSize:14,color:PG.ink2}}>
-            {mode==="login"?"还没有账户？":"已经有账户？"}
-            <button type="button" onClick={()=>{setMode(mode==="login"?"signup":"login");setMsg("");}} style={{color:PG.accent,fontWeight:700,marginLeft:8,padding:0,fontSize:14}}>{mode==="login"?"立即注册 →":"← 返回登录"}</button>
+          {msg&&<div className="fadeIn" style={{marginTop:14,padding:"11px 15px",background:msg.startsWith("err")?"rgba(225,29,72,0.06)":"rgba(34,197,94,0.08)",color:msg.startsWith("err")?"#e11d48":"#16a34a",fontSize:12.5,borderRadius:10,lineHeight:1.55,border:`1px solid ${msg.startsWith("err")?"rgba(225,29,72,0.18)":"rgba(34,197,94,0.2)"}`,letterSpacing:"0.01em"}}>{msg.slice(4)}</div>}
+          
+          {/* 隐私保障 - 简化提示 */}
+          <div style={{marginTop:22,paddingTop:18,borderTop:"1px solid rgba(109,95,255,0.08)",display:"flex",alignItems:"center",justifyContent:"center",gap:14,fontSize:11,color:"#a8a0d6",letterSpacing:"0.04em"}}>
+            <span style={{display:"flex",alignItems:"center",gap:5}}>
+              <span style={{width:5,height:5,borderRadius:"50%",background:"#22d3ee"}}/>
+              数据加密
+            </span>
+            <span style={{opacity:.4}}>·</span>
+            <span style={{display:"flex",alignItems:"center",gap:5}}>
+              <span style={{width:5,height:5,borderRadius:"50%",background:"#a78bfa"}}/>
+              云端同步
+            </span>
+            <span style={{opacity:.4}}>·</span>
+            <span style={{display:"flex",alignItems:"center",gap:5}}>
+              <span style={{width:5,height:5,borderRadius:"50%",background:"#ec4899"}}/>
+              多端互通
+            </span>
           </div>
+        </div>
+        
+        {/* 底部 footer */}
+        <div style={{textAlign:"center",marginTop:24,fontSize:11,color:"#a8a0d6",letterSpacing:"0.06em",animation:"fadeInUp 1s 0.3s var(--ease) backwards"}}>
+          <span className="mono">© Timelinek 2026</span>
+          <span style={{margin:"0 8px",opacity:.3}}>·</span>
+          <span>Made for focused minds</span>
         </div>
       </div>
     </div>
@@ -2967,9 +3029,11 @@ function MainApp({user}){
   const todayTasks=tasks.filter(t=>t.due===today);
   const todayTotal=todayTasks.length;
   const todayDone=todayTasks.filter(t=>t.done).length;
-  // 全量统计（HeroHeader / MobileHeader 使用）
-  const totalAll=tasks.length;
-  const doneAll=tasks.filter(t=>t.done).length;
+  // 「今日 + 逾期」统计（HeroHeader / MobileHeader / AI 上下文使用）
+  // 不再用全量 tasks.length（那会把所有未完成的未来任务也算进来，影响 AI 分析和复盘）
+  const todayAndOverdue=tasks.filter(t=>t.due===today||(t.due&&t.due<today&&!t.done));
+  const totalAll=todayAndOverdue.length;
+  const doneAll=todayAndOverdue.filter(t=>t.done).length;
   const overdueCount=tasks.filter(t=>isOverdue(t,today,nowMin,projects)).length;
   const runningTask=tasks.find(t=>t.id===runningId);
 
@@ -3111,11 +3175,9 @@ function SideNav({th,view,setView,projects,catOf,tasks,today,setShowSettings,set
   return(
     <aside className="slim-scroll" style={{position:"sticky",top:0,height:"100vh",padding:"16px 14px",borderRight:`1px solid ${th.glassBorder}`,display:"flex",flexDirection:"column",gap:4,overflowY:"auto",background:th.isDark?"rgba(13,11,26,0.35)":"rgba(255,255,255,0.3)",backdropFilter:"blur(10px)",WebkitBackdropFilter:"blur(10px)"}}>
       {/* Logo */}
-      <div style={{display:"flex",alignItems:"center",gap:10,padding:"4px 10px 14px"}}>
-        <div style={{width:28,height:28,borderRadius:8,background:"linear-gradient(135deg,#6d5fff,#ec4899)",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 0 12px rgba(109,95,255,0.5)"}}>
-          <span className="display" style={{color:"#fff",fontSize:18,fontStyle:"italic",letterSpacing:"-0.03em"}}>T</span>
-        </div>
-        <span className="display" style={{fontSize:17,color:th.ink0,letterSpacing:"-0.02em"}}>Timelinek</span>
+      <div style={{display:"flex",alignItems:"baseline",gap:1,padding:"4px 10px 14px"}}>
+        <span className="display" style={{fontSize:22,color:th.ink0,letterSpacing:"-0.03em",fontWeight:700,lineHeight:1}}>Time</span>
+        <em className="display" style={{fontSize:22,fontStyle:"italic",fontWeight:400,letterSpacing:"-0.03em",lineHeight:1,background:`linear-gradient(135deg,${th.accent},${th.accent3})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",backgroundClip:"text"}}>linek</em>
       </div>
 
       {/* AI 洞察入口 */}
@@ -3445,11 +3507,9 @@ function MobileHeader({th,displayName,greeting,dateNum,today,syncStatus,doneAll,
   return(
     <div style={{display:"flex",alignItems:"flex-start",gap:12,marginBottom:18}}>
       <div style={{flex:1,minWidth:0}}>
-        <div style={{display:"flex",alignItems:"center",gap:11,marginBottom:12}}>
-          <div style={{width:34,height:34,borderRadius:9,background:"linear-gradient(135deg,#6d5fff,#ec4899)",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 0 14px rgba(109,95,255,0.55)",flexShrink:0}}>
-            <span className="display" style={{color:"#fff",fontSize:22,fontStyle:"italic",lineHeight:1}}>T</span>
-          </div>
-          <span className="display" style={{fontSize:22,color:th.ink0,letterSpacing:"-0.02em",fontWeight:400}}>Timelinek</span>
+        <div style={{display:"flex",alignItems:"baseline",gap:1,marginBottom:12}}>
+          <span className="display" style={{fontSize:26,color:th.ink0,letterSpacing:"-0.03em",fontWeight:700,lineHeight:1}}>Time</span>
+          <em className="display" style={{fontSize:26,fontStyle:"italic",fontWeight:400,letterSpacing:"-0.03em",lineHeight:1,background:`linear-gradient(135deg,${th.accent},${th.accent3})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",backgroundClip:"text"}}>linek</em>
           <SyncBadge status={syncStatus} th={th}/>
         </div>
         <div style={{display:"flex",alignItems:"flex-end",gap:14}}>
@@ -3957,8 +4017,8 @@ function InboxView({th,today,showToast,user}){
   const mailtoLink=(msg)=>{
     if(!msg)return"#";
     const sender=senderInfo(msg.from);
-    const md=renderMessageAsMarkdown(msg,sender);
-    return`mailto:?subject=${encodeURIComponent("[Timelinek] "+(msg.subject||""))}&body=${encodeURIComponent(md)}`;
+    const txt=renderMessageAsPlainText(msg,sender);
+    return`mailto:?subject=${encodeURIComponent("[Timelinek] "+(msg.subject||""))}&body=${encodeURIComponent(txt)}`;
   };
   
   // 计数
@@ -4496,6 +4556,128 @@ function renderMessageAsMarkdown(msg,sender){
   lines.push("");
   lines.push("---");
   lines.push("_由 Timelinek AI 收件箱生成_");
+  return lines.join("\n");
+}
+
+// 把邮件渲染为纯文本（用于 mailto，邮件客户端不识别 markdown，所以这里完全去除符号）
+function renderMessageAsPlainText(msg,sender){
+  const dt=new Date(msg.createdAt);
+  const dStr=dt.toLocaleString("zh-CN",{year:"numeric",month:"long",day:"numeric",hour:"2-digit",minute:"2-digit"});
+  const lines=[];
+  // 顶部信息（用空行 + 缩进而不是 markdown 符号）
+  lines.push(msg.subject||"邮件");
+  lines.push("━".repeat(28));
+  lines.push("");
+  lines.push(`发件人：${sender.emoji}  ${sender.nameZh}（${sender.title}）`);
+  lines.push(`时间：${dStr}`);
+  if(Array.isArray(msg.tags)&&msg.tags.length)lines.push(`标签：${msg.tags.join("  ")}`);
+  lines.push("");
+  lines.push("─".repeat(28));
+  lines.push("");
+  
+  const c=msg.content;
+  const renderRating=(r)=>{
+    const n=Math.max(1,Math.min(5,Math.round(r||3)));
+    return"★".repeat(n)+"☆".repeat(5-n)+`  ${r}/5`;
+  };
+  
+  if(!c){
+    lines.push("（无内容）");
+  }else if(typeof c==="string"){
+    lines.push(c);
+  }else if(typeof c==="object"){
+    if(c.greeting){lines.push(c.greeting);lines.push("");}
+    if(c.title){lines.push(`【${c.title}】`);lines.push("");}
+    if(c.theme){lines.push(`本周主题：${c.theme}`);lines.push("");}
+    if(c.rating){lines.push(`评分：${renderRating(c.rating)}`);lines.push("");}
+    if(c.identity){lines.push(`「${c.identity}」`);lines.push("");}
+    if(c.review){lines.push("◆ 评价");lines.push(c.review);lines.push("");}
+    if(c.summary){lines.push("◆ 概览");lines.push(c.summary);lines.push("");}
+    if(Array.isArray(c.observations)&&c.observations.length){
+      lines.push("◆ 我注意到");
+      c.observations.forEach(o=>lines.push(`  ${o.icon||"·"}  ${o.text}`));
+      lines.push("");
+    }
+    if(Array.isArray(c.insights)&&c.insights.length){
+      lines.push("◆ 洞察");
+      c.insights.forEach((s,i)=>lines.push(`  ${i+1}. ${s}`));
+      lines.push("");
+    }
+    if(c.patterns){lines.push("◆ 模式分析");lines.push(c.patterns);lines.push("");}
+    if(Array.isArray(c.suggestions)&&c.suggestions.length){
+      lines.push("◆ 建议");
+      c.suggestions.forEach(s=>{
+        lines.push(`  → ${s.action}`);
+        if(s.reason)lines.push(`     ${s.reason}`);
+      });
+      lines.push("");
+    }
+    if(Array.isArray(c.tomorrow)&&c.tomorrow.length){
+      lines.push("◆ 明日提醒");
+      c.tomorrow.forEach(t=>lines.push(`  → ${t}`));
+      lines.push("");
+    }
+    if(Array.isArray(c.nextWeek)&&c.nextWeek.length){
+      lines.push("◆ 下周建议");
+      c.nextWeek.forEach(n=>lines.push(`  → ${n}`));
+      lines.push("");
+    }
+    // 画像专用字段
+    if(c.workPattern){
+      lines.push("◆ 工作节奏");
+      if(c.workPattern.peakTime)lines.push(`  高效时段：${c.workPattern.peakTime}`);
+      if(c.workPattern.lowTime)lines.push(`  低能时段：${c.workPattern.lowTime}`);
+      if(c.workPattern.weekRhythm)lines.push(`  一周节奏：${c.workPattern.weekRhythm}`);
+      lines.push("");
+    }
+    if(Array.isArray(c.strengths)&&c.strengths.length){
+      lines.push("◆ 优势");
+      c.strengths.forEach(s=>lines.push(`  · ${s}`));
+      lines.push("");
+    }
+    if(Array.isArray(c.blockers)&&c.blockers.length){
+      lines.push("◆ 阻碍");
+      c.blockers.forEach(s=>lines.push(`  · ${s}`));
+      lines.push("");
+    }
+    if(Array.isArray(c.goals)&&c.goals.length){
+      lines.push("◆ 目标");
+      c.goals.forEach(s=>lines.push(`  · ${s}`));
+      lines.push("");
+    }
+    // 排期专用字段
+    if(c.stats){
+      lines.push("◆ 任务统计");
+      lines.push(`  逾期 ${c.stats.overdue||0}  ·  今日 ${c.stats.today||0}  ·  未来 ${c.stats.future||0}`);
+      lines.push("");
+    }
+    if(Array.isArray(c.notes)&&c.notes.length){
+      lines.push("◆ 提示");
+      c.notes.forEach(n=>lines.push(`  · ${n}`));
+      lines.push("");
+    }
+    if(Array.isArray(c.plan)&&c.plan.length){
+      lines.push("◆ 排期方案");
+      c.plan.forEach(p=>{
+        lines.push(`  ${p.time||"--:--"}    任务 #${p.id}`);
+        if(p.reason)lines.push(`           ${p.reason}`);
+      });
+      lines.push("");
+    }
+    if(c.closing){
+      lines.push("─".repeat(28));
+      lines.push("");
+      lines.push(c.closing);
+      lines.push("");
+    }
+  }
+  
+  lines.push("");
+  lines.push("─".repeat(28));
+  lines.push(sender.signature.replace(/——/g,"——").trim());
+  lines.push("");
+  lines.push("由 Timelinek AI 收件箱生成");
+  lines.push(`https://timelinek.pages.dev`);
   return lines.join("\n");
 }
 
@@ -8218,6 +8400,9 @@ function Settings({th,themeId,setThemeId,cats,setCats,projects,setProjects,tasks
   );
 }
 
+// 清掉初始 splash（让 React 接管整个 root）
+const _splash=document.getElementById("initial-splash");
+if(_splash)_splash.remove();
 ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
 </script>
 </body>

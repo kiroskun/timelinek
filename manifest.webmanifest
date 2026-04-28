@@ -1,16 +1,18 @@
 {
-  "name": "Timelinek · 超级笔记本",
+  "id": "/?source=pwa",
+  "name": "Timelinek · 你的 AI 工作空间",
   "short_name": "Timelinek",
   "description": "任务 · 时间线 · 项目 · 专注 · 云同步",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "display_override": ["window-controls-overlay", "standalone"],
+  "display_override": ["standalone", "minimal-ui"],
   "orientation": "any",
-  "background_color": "#07060d",
-  "theme_color": "#6d5fff",
-  "categories": ["productivity", "utilities"],
+  "background_color": "#fafaff",
+  "theme_color": "#fafaff",
   "lang": "zh-CN",
+  "dir": "ltr",
+  "categories": ["productivity", "utilities"],
   "icons": [
     {
       "src": "icon-192.png",

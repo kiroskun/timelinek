@@ -10,9 +10,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
 <meta name="apple-mobile-web-app-title" content="Timelinek"/>
 <meta name="mobile-web-app-capable" content="yes"/>
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0%25' stop-color='%236d5fff'/><stop offset='100%25' stop-color='%23ec4899'/></linearGradient></defs><rect width='32' height='32' rx='8' fill='url(%23g)'/><text x='16' y='23' text-anchor='middle' font-family='serif' font-style='italic' font-size='20' font-weight='700' fill='white'>T</text></svg>"/>
-<link rel="manifest" href="manifest.webmanifest" id="manifest-link"/>
-<link rel="apple-touch-icon" href="apple-touch-icon.png"/>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><defs><linearGradient id='g' x1='0' y1='0.5' x2='1' y2='0.5'><stop offset='0%25' stop-color='%236d5fff'/><stop offset='50%25' stop-color='%23ec4899'/><stop offset='100%25' stop-color='%2322d3ee'/></linearGradient></defs><rect width='32' height='32' rx='6' fill='%23fafaff'/><text x='16' y='22' text-anchor='middle' font-family='Georgia,serif' font-style='italic' font-size='22' font-weight='700' fill='url(%23g)'>T</text></svg>"/>
+<link rel="manifest" href="manifest.webmanifest?v=3" id="manifest-link"/>
+<link rel="apple-touch-icon" href="apple-touch-icon.png?v=3"/>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
 <meta name="apple-mobile-web-app-title" content="Timelinek"/>
@@ -292,7 +292,7 @@ kbd{font-family:var(--f-mono);font-size:10px;padding:1px 5px;border-radius:3px;b
 if('serviceWorker' in navigator){
   // Network-first 策略：永远先尝试网络，失败时才 fallback 到缓存
   // 这样部署新版本后用户立刻就能拿到（旧的 cache-first 会让用户卡在旧版）
-  const swCode=`const CACHE='tlk-v5';self.addEventListener('install',e=>self.skipWaiting());self.addEventListener('activate',e=>e.waitUntil((async()=>{const keys=await caches.keys();await Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)));await clients.claim();})()));self.addEventListener('fetch',e=>{if(e.request.method!=='GET')return;e.respondWith(fetch(e.request).then(resp=>{if(resp.ok&&e.request.url.startsWith('http')){const c=resp.clone();caches.open(CACHE).then(ca=>ca.put(e.request,c));}return resp;}).catch(()=>caches.match(e.request).then(r=>r||caches.match('/'))));});`;
+  const swCode=`const CACHE='tlk-v6';self.addEventListener('install',e=>self.skipWaiting());self.addEventListener('activate',e=>e.waitUntil((async()=>{const keys=await caches.keys();await Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)));await clients.claim();})()));self.addEventListener('fetch',e=>{if(e.request.method!=='GET')return;const u=e.request.url;if(/manifest\\.webmanifest|icon-\\d+\\.png|icon-\\d+-maskable\\.png|apple-touch-icon\\.png|splash-.*\\.png/.test(u)){e.respondWith(fetch(e.request,{cache:'reload'}).catch(()=>caches.match(e.request)));return;}e.respondWith(fetch(e.request).then(resp=>{if(resp.ok&&u.startsWith('http')){const c=resp.clone();caches.open(CACHE).then(ca=>ca.put(e.request,c));}return resp;}).catch(()=>caches.match(e.request).then(r=>r||caches.match('/'))));});`;
   const blob=new Blob([swCode],{type:'application/javascript'});
   navigator.serviceWorker.register(URL.createObjectURL(blob)).catch(()=>{});
   // 检测到新 SW 后，下次访问立刻刷新（避免旧版 SW 卡死用户）

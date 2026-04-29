@@ -2707,38 +2707,53 @@ function MainApp({user}){
 
   // ═══ 自动每日复盘报告 ═══
   const[autoReport,setAutoReport]=useState(null);
+  // 防止并发执行（AI 调用耗时，可能 5 分钟 interval 和手动触发同时跑）
+  const autoReportRunning=useRef(false);
   useEffect(()=>{
     if(!loaded)return;
+    const genReport=async(reportDate,cfg)=>{
+      if(autoReportRunning.current)return;
+      autoReportRunning.current=true;
+      try{
+        const data=await aiDailyReport({date:reportDate,tasks,history,catOf,projOf,journals});
+        setAutoReport({type:"daily",data,date:reportDate});
+        // 用最新 config 写回，避免闭包旧值覆盖用户最新设置
+        setReviewConfig({...getReviewConfig(),lastDailyAt:reportDate});
+        addToInbox({
+          from:"reporter",
+          type:"daily_review",
+          subject:`今日复盘 · ${data.title||reportDate}`,
+          preview:data.review?String(data.review).slice(0,120):"",
+          content:data,
+          rawData:{type:"daily",data,date:reportDate},
+          tags:["daily","review"],
+        });
+      }catch(e){console.error("[Auto Daily Report]",e);}
+      finally{autoReportRunning.current=false;}
+    };
+
     const checkReview=async()=>{
       const cfg=getReviewConfig();
       if(!cfg.autoDaily)return;
       const now=new Date();
       const curHM=String(now.getHours()).padStart(2,"0")+":"+String(now.getMinutes()).padStart(2,"0");
-      // 已设的复盘时间 HH:MM
       const target=cfg.dailyTime||"21:30";
-      // 已为今天生成过则跳过
-      if(cfg.lastDailyAt===today)return;
-      // 当前时间过了目标时间，且没生成过 → 自动生成
-      if(curHM>=target){
-        try{
-          const data=await aiDailyReport({date:today,tasks,history,catOf,projOf,journals});
-          setAutoReport({type:"daily",data,date:today});
-          setReviewConfig({...cfg,lastDailyAt:today});
-          // 归档
-          addToInbox({
-            from:"reporter",
-            type:"daily_review",
-            subject:`今日复盘 · ${data.title||today}`,
-            preview:data.review?String(data.review).slice(0,120):"",
-            content:data,
-            rawData:{type:"daily",data,date:today},
-            tags:["daily","review"],
-          });
-        }catch(e){console.error("[Auto Daily Report]",e);}
+      const yesterday=addDays(today,-1);
+
+      // 情况 1：今天时间已到，且今天还没生成过
+      if(cfg.lastDailyAt!==today&&curHM>=target){
+        await genReport(today,cfg);
+        return;
+      }
+
+      // 情况 2：昨天的报告遗漏了（App 在触发时间前关闭，次日早晨打开）
+      // 条件：有过生成记录（非首次），且上次生成早于昨天，且今天触发时间还没到
+      if(cfg.lastDailyAt&&cfg.lastDailyAt<yesterday&&curHM<target){
+        await genReport(yesterday,cfg);
       }
     };
     checkReview();
-    const itv=setInterval(checkReview,5*60*1000); // 每 5 分钟检查
+    const itv=setInterval(checkReview,5*60*1000); // 每 5 分钟检查一次
     return()=>clearInterval(itv);
   },[loaded,tasks,history,journals,today]);
 
@@ -3259,7 +3274,7 @@ function SideNav({th,view,setView,projects,catOf,tasks,today,setShowSettings,set
       {/* Logo */}
       <div style={{display:"flex",alignItems:"baseline",gap:1,padding:"4px 10px 14px"}}>
         <span className="display" style={{fontSize:22,color:th.ink0,letterSpacing:"-0.03em",fontWeight:700,lineHeight:1}}>Time</span>
-        <em className="display" style={{fontSize:22,fontStyle:"italic",fontWeight:400,letterSpacing:"-0.03em",lineHeight:1,background:`linear-gradient(135deg,${th.accent},${th.accent3})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",backgroundClip:"text"}}>linek</em>
+        <em className="display" style={{fontSize:22,fontStyle:"italic",fontWeight:400,letterSpacing:"-0.03em",lineHeight:1,display:"inline-block",background:`linear-gradient(135deg,${th.accent},${th.accent3})`,WebkitBackgroundClip:"text",backgroundClip:"text",color:"transparent",WebkitTextFillColor:"transparent",paddingRight:"0.1em"}}>linek</em>
       </div>
 
       {/* AI 洞察入口 */}
@@ -3594,7 +3609,7 @@ function MobileHeader({th,displayName,greeting,dateNum,today,syncStatus,doneAll,
       <div style={{flex:1,minWidth:0}}>
         <div style={{display:"flex",alignItems:"baseline",gap:1,marginBottom:12}}>
           <span className="display" style={{fontSize:26,color:th.ink0,letterSpacing:"-0.03em",fontWeight:700,lineHeight:1}}>Time</span>
-          <em className="display" style={{fontSize:26,fontStyle:"italic",fontWeight:400,letterSpacing:"-0.03em",lineHeight:1,background:`linear-gradient(135deg,${th.accent},${th.accent3})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",backgroundClip:"text"}}>linek</em>
+          <em className="display" style={{fontSize:26,fontStyle:"italic",fontWeight:400,letterSpacing:"-0.03em",lineHeight:1,display:"inline-block",background:`linear-gradient(135deg,${th.accent},${th.accent3})`,WebkitBackgroundClip:"text",backgroundClip:"text",color:"transparent",WebkitTextFillColor:"transparent",paddingRight:"0.1em"}}>linek</em>
           <SyncBadge status={syncStatus} th={th}/>
         </div>
         <div style={{display:"flex",alignItems:"flex-end",gap:14}}>

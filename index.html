@@ -180,8 +180,8 @@ kbd{font-family:var(--f-mono);font-size:10px;padding:1px 5px;border-radius:3px;b
     #initial-splash .splash-center{display:flex;flex-direction:column;align-items:center;position:relative;z-index:2}
     #initial-splash .splash-logo{font-size:88px;letter-spacing:-0.05em;line-height:1;font-weight:700;display:flex;align-items:baseline;gap:1px;position:relative}
     #initial-splash .splash-logo .ch{display:inline-block;animation:splashLetter 0.7s cubic-bezier(0.22,1,0.36,1) both}
-    #initial-splash .splash-logo .a{color:#1a1530}
-    #initial-splash .splash-logo .b{font-style:italic;font-weight:400;background:linear-gradient(90deg,#6d5fff 0%,#ec4899 50%,#22d3ee 100%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;background-size:200% auto;animation:splashLetter 0.7s cubic-bezier(0.22,1,0.36,1) both,splashShimmer 5s ease-in-out infinite}
+    #initial-splash .splash-logo .a{color:#1a1530;animation:splashFadeIn 0.6s cubic-bezier(0.22,1,0.36,1) both}
+    #initial-splash .splash-logo .splash-linek{animation:splashFadeIn 0.7s 0.28s cubic-bezier(0.22,1,0.36,1) both}
     #initial-splash .splash-logo .c1{animation-delay:0.05s}
     #initial-splash .splash-logo .c2{animation-delay:0.1s}
     #initial-splash .splash-logo .c3{animation-delay:0.15s}
@@ -204,7 +204,16 @@ kbd{font-family:var(--f-mono);font-size:10px;padding:1px 5px;border-radius:3px;b
   <div class="splash-orb c"></div>
   <div class="splash-center">
     <div class="splash-logo">
-      <span class="a"><span class="ch c1">T</span><span class="ch c2">i</span><span class="ch c3">m</span><span class="ch c4">e</span></span><span class="b"><span class="ch c5">l</span><span class="ch c6">i</span><span class="ch c7">n</span><span class="ch c8">e</span><span class="ch c9">k</span></span>
+      <span class="a">Time</span><svg width="260" height="69" viewBox="0 0 260 69" style="overflow:visible;display:block;flex-shrink:0" class="splash-linek">
+        <defs>
+          <linearGradient id="splashGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#6d5fff"/>
+            <stop offset="50%" stop-color="#ec4899"/>
+            <stop offset="100%" stop-color="#22d3ee"/>
+          </linearGradient>
+        </defs>
+        <text x="0" y="69" font-family="'Instrument Serif','Noto Serif SC',Georgia,serif" font-size="88" font-style="italic" font-weight="400" letter-spacing="-0.05em" fill="url(#splashGrad)">linek</text>
+      </svg>
     </div>
     <div class="splash-underline"></div>
     <div class="splash-tagline">YOUR PERSONAL AI WORKSPACE</div>
@@ -3274,15 +3283,15 @@ function SideNav({th,view,setView,projects,catOf,tasks,today,setShowSettings,set
       {/* Logo */}
       <div style={{display:"flex",alignItems:"baseline",gap:1,padding:"4px 10px 14px"}}>
         <span className="display" style={{fontSize:22,color:th.ink0,letterSpacing:"-0.03em",fontWeight:700,lineHeight:1}}>Time</span>
-        {/* SVG text + linearGradient：backdrop-filter 内唯一可靠的渐变文字方案 */}
-        <svg width="58" height="26" viewBox="0 0 58 26" style={{overflow:"visible",flexShrink:0}}>
+        {/* SVG height=17 = 22px字体基线位置(22×0.78)，使 SVG 底边恰好对齐"Time"文字基线 */}
+        <svg width="62" height="17" viewBox="0 0 62 17" style={{overflow:"visible",flexShrink:0,display:"block"}}>
           <defs>
             <linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="0%">
               <stop offset="0%" stopColor={th.accent}/>
               <stop offset="100%" stopColor={th.accent3}/>
             </linearGradient>
           </defs>
-          <text x="0" y="20" fontFamily="'Instrument Serif','Noto Serif SC',Georgia,serif" fontSize="22" fontStyle="italic" fontWeight="400" letterSpacing="-0.03em" fill="url(#logoGrad)">linek</text>
+          <text x="0" y="17" fontFamily="'Instrument Serif','Noto Serif SC',Georgia,serif" fontSize="22" fontStyle="italic" fontWeight="400" letterSpacing="-0.03em" fill="url(#logoGrad)">linek</text>
         </svg>
       </div>
 
@@ -3618,15 +3627,15 @@ function MobileHeader({th,displayName,greeting,dateNum,today,syncStatus,doneAll,
       <div style={{flex:1,minWidth:0}}>
         <div style={{display:"flex",alignItems:"baseline",gap:1,marginBottom:12}}>
           <span className="display" style={{fontSize:26,color:th.ink0,letterSpacing:"-0.03em",fontWeight:700,lineHeight:1}}>Time</span>
-          {/* SVG text 渐变：避免 backdrop-filter 内 background-clip 失效问题 */}
-          <svg width="68" height="30" viewBox="0 0 68 30" style={{overflow:"visible",flexShrink:0}}>
+          {/* SVG height=20 = 26px字体基线位置(26×0.78)，对齐"Time"文字基线 */}
+          <svg width="74" height="20" viewBox="0 0 74 20" style={{overflow:"visible",flexShrink:0,display:"block"}}>
             <defs>
               <linearGradient id="logoGradM" x1="0%" y1="0%" x2="100%" y2="0%">
                 <stop offset="0%" stopColor={th.accent}/>
                 <stop offset="100%" stopColor={th.accent3}/>
               </linearGradient>
             </defs>
-            <text x="0" y="24" fontFamily="'Instrument Serif','Noto Serif SC',Georgia,serif" fontSize="26" fontStyle="italic" fontWeight="400" letterSpacing="-0.03em" fill="url(#logoGradM)">linek</text>
+            <text x="0" y="20" fontFamily="'Instrument Serif','Noto Serif SC',Georgia,serif" fontSize="26" fontStyle="italic" fontWeight="400" letterSpacing="-0.03em" fill="url(#logoGradM)">linek</text>
           </svg>
           <SyncBadge status={syncStatus} th={th}/>
         </div>

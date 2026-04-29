@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover"/>
 <title>Timelinek · 超级笔记本</title>
 <meta name="description" content="Timelinek · 任务 · 时间线 · 项目 · 专注 · 云同步"/>
-<meta name="theme-color" content="#fafaff"/>
+<meta name="theme-color" content="#fafaff" id="theme-color-meta"/>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
 <meta name="apple-mobile-web-app-title" content="Timelinek"/>
@@ -13,9 +13,6 @@
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><defs><linearGradient id='g' x1='0' y1='0.5' x2='1' y2='0.5'><stop offset='0%25' stop-color='%236d5fff'/><stop offset='50%25' stop-color='%23ec4899'/><stop offset='100%25' stop-color='%2322d3ee'/></linearGradient></defs><rect width='32' height='32' rx='6' fill='%23fafaff'/><text x='16' y='22' text-anchor='middle' font-family='Georgia,serif' font-style='italic' font-size='22' font-weight='700' fill='url(%23g)'>T</text></svg>"/>
 <link rel="manifest" href="manifest.webmanifest?v=3" id="manifest-link"/>
 <link rel="apple-touch-icon" href="appletouchicon.png?v=3"/>
-<meta name="apple-mobile-web-app-capable" content="yes"/>
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
-<meta name="apple-mobile-web-app-title" content="Timelinek"/>
 <link rel="apple-touch-startup-image" href="splash1284x2778.png"/>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -54,8 +51,8 @@ button{outline:none;touch-action:manipulation;cursor:pointer;border:none;backgro
 input[type="number"]::-webkit-inner-spin-button,input[type="number"]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
 ::-webkit-scrollbar{width:6px;height:6px}
 ::-webkit-scrollbar-track{background:transparent}
-::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.08);border-radius:3px}
-::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,0.18)}
+::-webkit-scrollbar-thumb{background:var(--glass-border,rgba(128,128,128,0.2));border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--glass-border-strong,rgba(128,128,128,0.35))}
 kbd{font-family:var(--f-mono);font-size:10px;padding:1px 5px;border-radius:3px;background:var(--glass-2);border:1px solid var(--glass-border);color:var(--ink-2)}
 
 /* ═══ Animations ═══ */
@@ -1376,7 +1373,8 @@ ${dailyData.slice(-7).map(d=>d.doneTitles.length?`${d.date}: ${d.doneTitles.join
   if(start>=0&&end>start)jsonStr=jsonStr.slice(start,end+1);
   try{
     const profile=JSON.parse(jsonStr);
-    return{...profile,updatedAt:new Date().toISOString(),version:1};
+    const nextVersion=(existingProfile?.version||0)+1;
+    return{...profile,updatedAt:new Date().toISOString(),version:nextVersion};
   }catch(e){console.error("[aiAnalyzeProfile]",content);throw new Error("画像分析失败");}
 }
 
@@ -1824,6 +1822,8 @@ function clearAllUserCache(){
       if(k&&(k.startsWith("tlk_v4")||k==="tlk_v4"))keys.push(k);
     }
     keys.forEach(k=>localStorage.removeItem(k));
+    // 同时清除 AI 相关数据，防止账号切换后数据泄露
+    [INBOX_KEY,PROFILE_KEY,INSIGHTS_KEY,META_KEY,"tlk_chat_v1","tlk_timer",SOUND_CONFIG_KEY,REVIEW_CONFIG_KEY,EMAIL_FORWARD_KEY].forEach(k=>{try{localStorage.removeItem(k);}catch{}});
   }catch{}
 }
 function saveTimerState(taskId,startTs,accumMin){try{localStorage.setItem("tlk_timer",JSON.stringify({taskId,startTs,accumMin}));}catch{}}
@@ -1842,6 +1842,7 @@ function sanitizeImport(d){
     timeEnd:typeof t.timeEnd==="string"?t.timeEnd:"",duration:t.duration?String(t.duration):"",
     repeat:!!t.repeat,done:!!t.done,actualMin:Number(t.actualMin)||0,
     progress:Number(t.progress)||0,projectId:typeof t.projectId==="string"?t.projectId:"",
+    tagIds:Array.isArray(t.tagIds)?t.tagIds:[],
     createdAt:typeof t.createdAt==="string"?t.createdAt:todayStr(),
   }));
   if(Array.isArray(d.history))out.history=d.history.filter(h=>h&&typeof h==="object"&&typeof h.date==="string"&&Array.isArray(h.tasks)).map(h=>({date:h.date,tasks:h.tasks.filter(t=>t&&typeof t.title==="string").map(t=>({id:t.id||Date.now()+Math.random(),title:String(t.title).slice(0,200),category:t.category||"other",priority:PRIORITIES.includes(t.priority)?t.priority:"中",done:!!t.done,duration:t.duration?String(t.duration):"",actualMin:Number(t.actualMin)||0,timeStart:t.timeStart||"",timeEnd:t.timeEnd||"",repeat:!!t.repeat,progress:Number(t.progress)||0,projectId:t.projectId||""}))}));
@@ -2938,8 +2939,9 @@ function MainApp({user}){
     setPoppingId(id);setTimeout(()=>setPoppingId(null),340);
     if(task&&!task.done){
       window.__playSound&&window.__playSound("taskDone");
-      const rest=tasks.filter(t=>!t.done&&t.id!==id).length;
-      if(rest===0&&tasks.length>0)showToast("今日任务全部完成 🎉","success");
+      // 只统计今日+逾期的未完成任务，不把未来任务算进"全完成"
+      const rest=tasks.filter(t=>!t.done&&t.id!==id&&(t.due===today||(t.due&&t.due<today)||!t.due)).length;
+      if(rest===0&&tasks.some(t=>t.due===today||(!t.done&&t.due&&t.due<today)||!t.due))showToast("今日任务全部完成 🎉","success");
     }
   };
   const updateProgress=(id,progress)=>{
@@ -2984,7 +2986,7 @@ function MainApp({user}){
     setUndo(null);showToast("已恢复","info");
   };
   const startEdit=task=>{
-    setTaskForm({title:task.title,content:task.content||"",category:task.category,priority:task.priority,due:task.due||"",timeStart:task.timeStart||"",timeEnd:task.timeEnd||"",duration:task.duration||"",repeat:!!task.repeat,progress:task.progress||0,projectId:task.projectId||""});
+    setTaskForm({title:task.title,content:task.content||"",category:task.category,priority:task.priority,due:task.due||"",timeStart:task.timeStart||"",timeEnd:task.timeEnd||"",duration:task.duration||"",repeat:!!task.repeat,progress:task.progress||0,projectId:task.projectId||"",tagIds:task.tagIds||[]});
     setEditTaskId(task.id);setShowTaskForm(true);
   };
   const cancelForm=()=>{setShowTaskForm(false);setEditTaskId(null);setTaskForm(emptyTask);};
@@ -3111,6 +3113,12 @@ function MainApp({user}){
   const runningTask=tasks.find(t=>t.id===runningId);
 
   // CSS vars 应用主题
+  // 同步 theme-color meta（浏览器 chrome / PWA 状态栏颜色跟随主题）
+  useEffect(()=>{
+    const meta=document.getElementById("theme-color-meta");
+    if(meta)meta.setAttribute("content",th.bg0||th.bg1||"#07060d");
+  },[th]);
+
   const themeStyle={
     "--bg-0":th.bg0,"--bg-1":th.bg1,"--bg-2":th.bg2,"--bg-3":th.bg3,
     "--ink-0":th.ink0,"--ink-1":th.ink1,"--ink-2":th.ink2,"--ink-3":th.ink3,
@@ -3243,6 +3251,7 @@ function SideNav({th,view,setView,projects,catOf,tasks,today,setShowSettings,set
     {id:"recent",t:"近期完成",ic:"check"},
     {id:"journal",t:"一句日记",ic:"book"},
     {id:"review",t:"复盘",ic:"star"},
+    {id:"inbox",t:"AI 收件箱",ic:"mail"},
   ];
   const todayCount=tasks.filter(t=>t.due===today&&!t.done).length;
   return(
@@ -3266,14 +3275,17 @@ function SideNav({th,view,setView,projects,catOf,tasks,today,setShowSettings,set
       )}
 
       <div className="mono" style={{fontSize:11,letterSpacing:"0.2em",color:th.ink3,padding:"8px 10px 6px",fontWeight:600}}>WORKSPACE</div>
-      {items.map(it=>(
-        <button key={it.id} onClick={()=>setView(it.id)} className={`nav-item ${view===it.id?"active":""}`} style={it.id==="inbox"&&it.badge>0?{position:"relative"}:undefined}>
-          <Ic n={it.ic} size={14} color={view===it.id?th.accent2:(it.id==="inbox"&&it.badge>0?th.accent2:th.ink3)}/>
-          <span style={{flex:1,fontWeight:it.id==="inbox"&&it.badge>0?600:undefined,color:it.id==="inbox"&&it.badge>0&&view!==it.id?th.ink0:undefined}}>{it.t}</span>
+      {items.map(it=>{
+        const badge=it.id==="inbox"?unreadInboxCount:0;
+        return(
+        <button key={it.id} onClick={()=>setView(it.id)} className={`nav-item ${view===it.id?"active":""}`} style={badge>0?{position:"relative"}:undefined}>
+          <Ic n={it.ic} size={14} color={view===it.id?th.accent2:(badge>0?th.accent2:th.ink3)}/>
+          <span style={{flex:1,fontWeight:badge>0?600:undefined,color:badge>0&&view!==it.id?th.ink0:undefined}}>{it.t}</span>
           {it.id==="today"&&todayCount>0&&<span className="mono tnum" style={{fontSize:10,padding:"1px 7px",borderRadius:9,background:view===it.id?th.accent+"40":th.glass2,color:view===it.id?"#fff":th.ink3}}>{todayCount}</span>}
-          {it.id==="inbox"&&it.badge>0&&<span className="mono tnum" style={{fontSize:10,padding:"1px 7px",borderRadius:9,background:`linear-gradient(135deg,#ec4899,#f43f5e)`,color:"#fff",fontWeight:700,boxShadow:"0 0 10px rgba(236,72,153,0.5)",animation:"breathe 2.4s ease-in-out infinite"}}>{it.badge}</span>}
+          {badge>0&&<span className="mono tnum" style={{fontSize:10,padding:"1px 7px",borderRadius:9,background:`linear-gradient(135deg,#ec4899,#f43f5e)`,color:"#fff",fontWeight:700,boxShadow:"0 0 10px rgba(236,72,153,0.5)",animation:"breathe 2.4s ease-in-out infinite"}}>{badge}</span>}
         </button>
-      ))}
+        );
+      })}
 
       <div className="mono" style={{fontSize:11,letterSpacing:"0.2em",color:th.ink3,padding:"18px 10px 6px",display:"flex",alignItems:"center",fontWeight:600}}>
         PROJECTS
@@ -3622,7 +3634,7 @@ function MobileHeader({th,displayName,greeting,dateNum,today,syncStatus,doneAll,
 
 // ═══ MOBILE VIEW SWITCHER ═══
 function MobileViewSwitcher({th,view,setView}){
-  const views=[["today","今日","target"],["tomorrow","明日","arrowRight"],["week","本周","calendar"],["month","月视图","grid"],["kanban","看板","layers"],["projects","项目","folder"],["activity","活动","list"],["recent","近期完成","check"],["journal","日记","book"],["review","复盘","star"]];
+  const views=[["today","今日","target"],["tomorrow","明日","arrowRight"],["week","本周","calendar"],["month","月视图","grid"],["kanban","看板","layers"],["projects","项目","folder"],["assistant","AI 助手","bot"],["activity","活动","list"],["recent","近期完成","check"],["journal","日记","book"],["review","复盘","star"],["inbox","收件箱","mail"]];
   return(
     <div className="slim-scroll" style={{display:"flex",gap:6,marginBottom:16,overflowX:"auto",paddingBottom:2,margin:"0 -14px 16px",padding:"0 14px 2px"}}>
       {views.map(([k,label,icon])=>{
@@ -8585,7 +8597,7 @@ function Bullet({th,children}){
 
 function Settings({th,themeId,setThemeId,cats,setCats,projects,setProjects,tasks,history,setTasks,setHistory,trash,restoreTask,purgeTask,emptyTrash,tags,addTag,updateTag,removeTag,onClose,user,onSignOut,notifPerm,askNotif,installPWA,installState,today,showToast,catOf,requestProfileUpdate,requestWeeklyInsight,profileGenerating}){
   const[tab,setTab]=useState("appearance");
-  const exportJSON=()=>{const data={tasks,history,cats,projects,exportedAt:todayStr()};const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=`timelinek-${todayStr()}.json`;a.click();URL.revokeObjectURL(url);showToast("已导出","success");};
+  const exportJSON=()=>{const data={tasks,history,cats,projects,tags,journals,exportedAt:todayStr()};const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=`timelinek-${todayStr()}.json`;a.click();URL.revokeObjectURL(url);showToast("已导出","success");};
   const exportXLSX=()=>{
     try{
       const wb=XLSX.utils.book_new();

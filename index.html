@@ -5,15 +5,18 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover"/>
 <title>Timelinek · 超级笔记本</title>
 <meta name="description" content="Timelinek · 任务 · 时间线 · 项目 · 专注 · 云同步"/>
-<meta name="theme-color" content="#fafaff" id="theme-color-meta"/>
+<meta name="theme-color" content="#fafaff"/>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
 <meta name="apple-mobile-web-app-title" content="Timelinek"/>
 <meta name="mobile-web-app-capable" content="yes"/>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><defs><linearGradient id='g' x1='0' y1='0.5' x2='1' y2='0.5'><stop offset='0%25' stop-color='%236d5fff'/><stop offset='50%25' stop-color='%23ec4899'/><stop offset='100%25' stop-color='%2322d3ee'/></linearGradient></defs><rect width='32' height='32' rx='6' fill='%23fafaff'/><text x='16' y='22' text-anchor='middle' font-family='Georgia,serif' font-style='italic' font-size='22' font-weight='700' fill='url(%23g)'>T</text></svg>"/>
 <link rel="manifest" href="manifest.webmanifest?v=3" id="manifest-link"/>
-<link rel="apple-touch-icon" href="appletouchicon.png?v=3"/>
-<link rel="apple-touch-startup-image" href="splash1284x2778.png"/>
+<link rel="apple-touch-icon" href="apple-touch-icon.png?v=3"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-title" content="Timelinek"/>
+<link rel="apple-touch-startup-image" href="splash-1284x2778.png"/>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:ital,wght@0,600;0,700;1,700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -51,8 +54,8 @@ button{outline:none;touch-action:manipulation;cursor:pointer;border:none;backgro
 input[type="number"]::-webkit-inner-spin-button,input[type="number"]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
 ::-webkit-scrollbar{width:6px;height:6px}
 ::-webkit-scrollbar-track{background:transparent}
-::-webkit-scrollbar-thumb{background:var(--glass-border,rgba(128,128,128,0.2));border-radius:3px}
-::-webkit-scrollbar-thumb:hover{background:var(--glass-border-strong,rgba(128,128,128,0.35))}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.08);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,0.18)}
 kbd{font-family:var(--f-mono);font-size:10px;padding:1px 5px;border-radius:3px;background:var(--glass-2);border:1px solid var(--glass-border);color:var(--ink-2)}
 
 /* ═══ Animations ═══ */
@@ -180,8 +183,8 @@ kbd{font-family:var(--f-mono);font-size:10px;padding:1px 5px;border-radius:3px;b
     #initial-splash .splash-center{display:flex;flex-direction:column;align-items:center;position:relative;z-index:2}
     #initial-splash .splash-logo{font-size:88px;letter-spacing:-0.05em;line-height:1;font-weight:700;display:flex;align-items:baseline;gap:1px;position:relative}
     #initial-splash .splash-logo .ch{display:inline-block;animation:splashLetter 0.7s cubic-bezier(0.22,1,0.36,1) both}
-    #initial-splash .splash-logo .a{color:#1a1530;animation:splashFadeIn 0.6s cubic-bezier(0.22,1,0.36,1) both}
-    #initial-splash .splash-logo .splash-linek{animation:splashFadeIn 0.7s 0.28s cubic-bezier(0.22,1,0.36,1) both}
+    #initial-splash .splash-logo .a{color:#1a1530}
+    #initial-splash .splash-logo .b{font-style:italic;font-weight:400;background:linear-gradient(90deg,#6d5fff 0%,#ec4899 50%,#22d3ee 100%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;background-size:200% auto;animation:splashLetter 0.7s cubic-bezier(0.22,1,0.36,1) both,splashShimmer 5s ease-in-out infinite}
     #initial-splash .splash-logo .c1{animation-delay:0.05s}
     #initial-splash .splash-logo .c2{animation-delay:0.1s}
     #initial-splash .splash-logo .c3{animation-delay:0.15s}
@@ -204,16 +207,7 @@ kbd{font-family:var(--f-mono);font-size:10px;padding:1px 5px;border-radius:3px;b
   <div class="splash-orb c"></div>
   <div class="splash-center">
     <div class="splash-logo">
-      <span class="a">Time</span><svg width="260" height="69" viewBox="0 0 260 69" style="overflow:visible;display:block;flex-shrink:0" class="splash-linek">
-        <defs>
-          <linearGradient id="splashGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stop-color="#6d5fff"/>
-            <stop offset="50%" stop-color="#ec4899"/>
-            <stop offset="100%" stop-color="#22d3ee"/>
-          </linearGradient>
-        </defs>
-        <text x="0" y="69" font-family="'Instrument Serif','Noto Serif SC',Georgia,serif" font-size="88" font-style="italic" font-weight="400" letter-spacing="-0.05em" fill="url(#splashGrad)">linek</text>
-      </svg>
+      <span class="a"><span class="ch c1">T</span><span class="ch c2">i</span><span class="ch c3">m</span><span class="ch c4">e</span></span><span class="b"><span class="ch c5">l</span><span class="ch c6">i</span><span class="ch c7">n</span><span class="ch c8">e</span><span class="ch c9">k</span></span>
     </div>
     <div class="splash-underline"></div>
     <div class="splash-tagline">YOUR PERSONAL AI WORKSPACE</div>
@@ -280,7 +274,7 @@ kbd{font-family:var(--f-mono);font-size:10px;padding:1px 5px;border-radius:3px;b
       if(ml)ml.setAttribute('href',URL.createObjectURL(blob));
     });
     // apple-touch-icon 也做 fallback：如果 apple-touch-icon.png 不存在，注入 dataURL 版
-    fetch('appletouchicon.png',{cache:'no-cache'}).then(r=>{
+    fetch('apple-touch-icon.png',{cache:'no-cache'}).then(r=>{
       if(!r.ok)throw new Error();
     }).catch(()=>{
       const apple=document.createElement('link');apple.rel='apple-touch-icon';apple.setAttribute('sizes','180x180');apple.href=makeAppIcon(180,false);
@@ -296,19 +290,18 @@ kbd{font-family:var(--f-mono);font-size:10px;padding:1px 5px;border-radius:3px;b
   setTimeout(()=>{const root=document.getElementById('root');if(root&&root.children.length===0&&box.style.display==='none'){const tips=[];if(!window.React)tips.push('❌ React 未加载');if(!window.ReactDOM)tips.push('❌ ReactDOM 未加载');if(!window.Babel)tips.push('❌ Babel 未加载');if(!window.supabase)tips.push('❌ Supabase 未加载 (cdn.jsdelivr.net 可能被墙)');if(window.React&&window.Babel&&window.supabase)tips.push('✓ 依赖都在 · 但渲染失败');show('加载超过 5 秒，页面仍为空',tips.join('\n')||'未知');}},5000);
 })();
 if('serviceWorker' in navigator){
-  // 注册独立 sw.js（不使用 blob URL：blob URL 每次生成新 URL，触发 controllerchange，导致无限刷新）
-  navigator.serviceWorker.register('./sw.js').then(reg=>{
-    console.log('[SW] 注册成功，scope=',reg.scope);
-    // 检测到新 SW 时仅记录日志，不自动刷新（避免刷新循环）
-    reg.addEventListener('updatefound',()=>{
-      const nw=reg.installing;if(!nw)return;
-      nw.addEventListener('statechange',()=>{
-        if(nw.state==='installed'&&navigator.serviceWorker.controller){
-          console.log('[SW] 新版本已就绪，下次访问生效');
-        }
-      });
-    });
-  }).catch(e=>console.warn('[SW] 注册失败',e));
+  // Network-first 策略：永远先尝试网络，失败时才 fallback 到缓存
+  // 这样部署新版本后用户立刻就能拿到（旧的 cache-first 会让用户卡在旧版）
+  const swCode=`const CACHE='tlk-v6';self.addEventListener('install',e=>self.skipWaiting());self.addEventListener('activate',e=>e.waitUntil((async()=>{const keys=await caches.keys();await Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)));await clients.claim();})()));self.addEventListener('fetch',e=>{if(e.request.method!=='GET')return;const u=e.request.url;if(/manifest\\.webmanifest|icon-\\d+\\.png|icon-\\d+-maskable\\.png|apple-touch-icon\\.png|splash-.*\\.png/.test(u)){e.respondWith(fetch(e.request,{cache:'reload'}).catch(()=>caches.match(e.request)));return;}e.respondWith(fetch(e.request).then(resp=>{if(resp.ok&&u.startsWith('http')){const c=resp.clone();caches.open(CACHE).then(ca=>ca.put(e.request,c));}return resp;}).catch(()=>caches.match(e.request).then(r=>r||caches.match('/'))));});`;
+  const blob=new Blob([swCode],{type:'application/javascript'});
+  navigator.serviceWorker.register(URL.createObjectURL(blob)).catch(()=>{});
+  // 检测到新 SW 后，下次访问立刻刷新（避免旧版 SW 卡死用户）
+  navigator.serviceWorker.addEventListener('controllerchange',()=>{
+    if(window._tlk_reloading)return;
+    window._tlk_reloading=true;
+    console.log('[SW] 新版本已就绪，刷新页面');
+    setTimeout(()=>location.reload(),300);
+  });
 }
 </script>
 <script type="text/babel">
@@ -461,7 +454,7 @@ async function forwardEmail(msg){
     else console.warn("[forwardEmail] 失败",resp.status,await resp.text());
   }catch(e){console.warn("[forwardEmail] 异常",e);}
 }
-// 合并 inbox：按 id 合并；同 id 时以 updatedAt 时间戳更新的一端为准（解决 archived 单向棘轮问题）
+// 合并 inbox：按 id 合并；同 id 时本地的 read/starred/archived 优先（保留用户操作）；新邮件直接加入；按时间排序
 function mergeInbox(local,cloud){
   const localMap=new Map((local||[]).map(m=>[m.id,m]));
   const cloudMap=new Map((cloud||[]).map(m=>[m.id,m]));
@@ -470,21 +463,12 @@ function mergeInbox(local,cloud){
   allIds.forEach(id=>{
     const l=localMap.get(id),c=cloudMap.get(id);
     if(l&&c){
-      // 内容以云端为准；用户操作状态（read/starred/archived）以 updatedAt 更新更晚的一端为准
-      // 如果没有 updatedAt（旧数据），fallback 到 OR 合并（保持向后兼容）
-      const lUpd=l.updatedAt||"";
-      const cUpd=c.updatedAt||"";
-      let stateSource;
-      if(lUpd&&cUpd){stateSource=lUpd>=cUpd?l:c;}
-      else if(lUpd){stateSource=l;}
-      else if(cUpd){stateSource=c;}
-      else{stateSource={read:l.read||c.read,starred:l.starred||c.starred,archived:l.archived||c.archived};}
+      // 同 id：内容以云端为准，但用户操作（read/starred/archived）优先取「true 值」（即任一端标记过就算）
       merged.push({
         ...c,
-        read:stateSource.read,
-        starred:stateSource.starred,
-        archived:stateSource.archived,
-        updatedAt:lUpd>=cUpd?lUpd:cUpd,
+        read:l.read||c.read,
+        starred:l.starred||c.starred,
+        archived:l.archived||c.archived,
       });
     }else{
       merged.push(l||c);
@@ -748,7 +732,7 @@ const GREETINGS=[
 // ═══ HELPERS ═══
 function todayStr(){const d=new Date();return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}
 function dateStr(d){return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}
-function addDays(ds,n){const d=new Date(ds+"T00:00:00");d.setDate(d.getDate()+n);return dateStr(d);}
+function addDays(ds,n){const d=new Date(ds);d.setDate(d.getDate()+n);return dateStr(d);}
 function calcMin(s,e){try{const[sh,sm]=s.split(":").map(Number),[eh,em]=e.split(":").map(Number);const d=(eh*60+em)-(sh*60+sm);return d>0?d:null;}catch{return null;}}
 function timeToMin(t){try{const[h,m]=t.split(":").map(Number);return h*60+m;}catch{return null;}}
 function fmtMin(m){if(m==null||isNaN(m))return"";m=Math.round(m);if(m<60)return m+"min";const h=Math.floor(m/60),r=m%60;return h+"h"+(r?r+"m":"");}
@@ -1382,8 +1366,7 @@ ${dailyData.slice(-7).map(d=>d.doneTitles.length?`${d.date}: ${d.doneTitles.join
   if(start>=0&&end>start)jsonStr=jsonStr.slice(start,end+1);
   try{
     const profile=JSON.parse(jsonStr);
-    const nextVersion=(existingProfile?.version||0)+1;
-    return{...profile,updatedAt:new Date().toISOString(),version:nextVersion};
+    return{...profile,updatedAt:new Date().toISOString(),version:1};
   }catch(e){console.error("[aiAnalyzeProfile]",content);throw new Error("画像分析失败");}
 }
 
@@ -1831,8 +1814,6 @@ function clearAllUserCache(){
       if(k&&(k.startsWith("tlk_v4")||k==="tlk_v4"))keys.push(k);
     }
     keys.forEach(k=>localStorage.removeItem(k));
-    // 同时清除 AI 相关数据，防止账号切换后数据泄露
-    [INBOX_KEY,PROFILE_KEY,INSIGHTS_KEY,META_KEY,"tlk_chat_v1","tlk_timer",SOUND_CONFIG_KEY,REVIEW_CONFIG_KEY,EMAIL_FORWARD_KEY].forEach(k=>{try{localStorage.removeItem(k);}catch{}});
   }catch{}
 }
 function saveTimerState(taskId,startTs,accumMin){try{localStorage.setItem("tlk_timer",JSON.stringify({taskId,startTs,accumMin}));}catch{}}
@@ -1851,7 +1832,6 @@ function sanitizeImport(d){
     timeEnd:typeof t.timeEnd==="string"?t.timeEnd:"",duration:t.duration?String(t.duration):"",
     repeat:!!t.repeat,done:!!t.done,actualMin:Number(t.actualMin)||0,
     progress:Number(t.progress)||0,projectId:typeof t.projectId==="string"?t.projectId:"",
-    tagIds:Array.isArray(t.tagIds)?t.tagIds:[],
     createdAt:typeof t.createdAt==="string"?t.createdAt:todayStr(),
   }));
   if(Array.isArray(d.history))out.history=d.history.filter(h=>h&&typeof h==="object"&&typeof h.date==="string"&&Array.isArray(h.tasks)).map(h=>({date:h.date,tasks:h.tasks.filter(t=>t&&typeof t.title==="string").map(t=>({id:t.id||Date.now()+Math.random(),title:String(t.title).slice(0,200),category:t.category||"other",priority:PRIORITIES.includes(t.priority)?t.priority:"中",done:!!t.done,duration:t.duration?String(t.duration):"",actualMin:Number(t.actualMin)||0,timeStart:t.timeStart||"",timeEnd:t.timeEnd||"",repeat:!!t.repeat,progress:Number(t.progress)||0,projectId:t.projectId||""}))}));
@@ -1884,6 +1864,7 @@ const IC_PATHS={
   calendar:<><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></>,
   clock:<><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></>,
   timer:<><circle cx="12" cy="13" r="8"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="9" y1="2" x2="15" y2="2"/></>,
+  inbox:<><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z"/></>,
   flame:<path d="M12 2s6 6 6 12a6 6 0 01-12 0c0-2 1-4 2-5 0 2 1 3 2 3 0-3 1-6 2-10z"/>,
   star:<polygon points="12 2 15.1 8.3 22 9.3 17 14.1 18.2 21 12 17.8 5.8 21 7 14.1 2 9.3 8.9 8.3 12 2"/>,
   user:<><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></>,
@@ -1893,6 +1874,7 @@ const IC_PATHS={
   trash:<><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></>,
   hash:<><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></>,
   book:<><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></>,
+  filter:<polygon points="22 3 2 3 10 12.5 10 19 14 21 14 12.5 22 3"/>,
   target:<><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/></>,
   layers:<><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></>,
   grid:<><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></>,
@@ -2716,53 +2698,38 @@ function MainApp({user}){
 
   // ═══ 自动每日复盘报告 ═══
   const[autoReport,setAutoReport]=useState(null);
-  // 防止并发执行（AI 调用耗时，可能 5 分钟 interval 和手动触发同时跑）
-  const autoReportRunning=useRef(false);
   useEffect(()=>{
     if(!loaded)return;
-    const genReport=async(reportDate,cfg)=>{
-      if(autoReportRunning.current)return;
-      autoReportRunning.current=true;
-      try{
-        const data=await aiDailyReport({date:reportDate,tasks,history,catOf,projOf,journals});
-        setAutoReport({type:"daily",data,date:reportDate});
-        // 用最新 config 写回，避免闭包旧值覆盖用户最新设置
-        setReviewConfig({...getReviewConfig(),lastDailyAt:reportDate});
-        addToInbox({
-          from:"reporter",
-          type:"daily_review",
-          subject:`今日复盘 · ${data.title||reportDate}`,
-          preview:data.review?String(data.review).slice(0,120):"",
-          content:data,
-          rawData:{type:"daily",data,date:reportDate},
-          tags:["daily","review"],
-        });
-      }catch(e){console.error("[Auto Daily Report]",e);}
-      finally{autoReportRunning.current=false;}
-    };
-
     const checkReview=async()=>{
       const cfg=getReviewConfig();
       if(!cfg.autoDaily)return;
       const now=new Date();
       const curHM=String(now.getHours()).padStart(2,"0")+":"+String(now.getMinutes()).padStart(2,"0");
+      // 已设的复盘时间 HH:MM
       const target=cfg.dailyTime||"21:30";
-      const yesterday=addDays(today,-1);
-
-      // 情况 1：今天时间已到，且今天还没生成过
-      if(cfg.lastDailyAt!==today&&curHM>=target){
-        await genReport(today,cfg);
-        return;
-      }
-
-      // 情况 2：昨天的报告遗漏了（App 在触发时间前关闭，次日早晨打开）
-      // 条件：有过生成记录（非首次），且上次生成早于昨天，且今天触发时间还没到
-      if(cfg.lastDailyAt&&cfg.lastDailyAt<yesterday&&curHM<target){
-        await genReport(yesterday,cfg);
+      // 已为今天生成过则跳过
+      if(cfg.lastDailyAt===today)return;
+      // 当前时间过了目标时间，且没生成过 → 自动生成
+      if(curHM>=target){
+        try{
+          const data=await aiDailyReport({date:today,tasks,history,catOf,projOf,journals});
+          setAutoReport({type:"daily",data,date:today});
+          setReviewConfig({...cfg,lastDailyAt:today});
+          // 归档
+          addToInbox({
+            from:"reporter",
+            type:"daily_review",
+            subject:`今日复盘 · ${data.title||today}`,
+            preview:data.review?String(data.review).slice(0,120):"",
+            content:data,
+            rawData:{type:"daily",data,date:today},
+            tags:["daily","review"],
+          });
+        }catch(e){console.error("[Auto Daily Report]",e);}
       }
     };
     checkReview();
-    const itv=setInterval(checkReview,5*60*1000); // 每 5 分钟检查一次
+    const itv=setInterval(checkReview,5*60*1000); // 每 5 分钟检查
     return()=>clearInterval(itv);
   },[loaded,tasks,history,journals,today]);
 
@@ -2963,9 +2930,8 @@ function MainApp({user}){
     setPoppingId(id);setTimeout(()=>setPoppingId(null),340);
     if(task&&!task.done){
       window.__playSound&&window.__playSound("taskDone");
-      // 只统计今日+逾期的未完成任务，不把未来任务算进"全完成"
-      const rest=tasks.filter(t=>!t.done&&t.id!==id&&(t.due===today||(t.due&&t.due<today)||!t.due)).length;
-      if(rest===0&&tasks.some(t=>t.due===today||(!t.done&&t.due&&t.due<today)||!t.due))showToast("今日任务全部完成 🎉","success");
+      const rest=tasks.filter(t=>!t.done&&t.id!==id).length;
+      if(rest===0&&tasks.length>0)showToast("今日任务全部完成 🎉","success");
     }
   };
   const updateProgress=(id,progress)=>{
@@ -3010,7 +2976,7 @@ function MainApp({user}){
     setUndo(null);showToast("已恢复","info");
   };
   const startEdit=task=>{
-    setTaskForm({title:task.title,content:task.content||"",category:task.category,priority:task.priority,due:task.due||"",timeStart:task.timeStart||"",timeEnd:task.timeEnd||"",duration:task.duration||"",repeat:!!task.repeat,progress:task.progress||0,projectId:task.projectId||"",tagIds:task.tagIds||[]});
+    setTaskForm({title:task.title,content:task.content||"",category:task.category,priority:task.priority,due:task.due||"",timeStart:task.timeStart||"",timeEnd:task.timeEnd||"",duration:task.duration||"",repeat:!!task.repeat,progress:task.progress||0,projectId:task.projectId||""});
     setEditTaskId(task.id);setShowTaskForm(true);
   };
   const cancelForm=()=>{setShowTaskForm(false);setEditTaskId(null);setTaskForm(emptyTask);};
@@ -3137,12 +3103,6 @@ function MainApp({user}){
   const runningTask=tasks.find(t=>t.id===runningId);
 
   // CSS vars 应用主题
-  // 同步 theme-color meta（浏览器 chrome / PWA 状态栏颜色跟随主题）
-  useEffect(()=>{
-    const meta=document.getElementById("theme-color-meta");
-    if(meta)meta.setAttribute("content",th.bg0||th.bg1||"#07060d");
-  },[th]);
-
   const themeStyle={
     "--bg-0":th.bg0,"--bg-1":th.bg1,"--bg-2":th.bg2,"--bg-3":th.bg3,
     "--ink-0":th.ink0,"--ink-1":th.ink1,"--ink-2":th.ink2,"--ink-3":th.ink3,
@@ -3275,7 +3235,6 @@ function SideNav({th,view,setView,projects,catOf,tasks,today,setShowSettings,set
     {id:"recent",t:"近期完成",ic:"check"},
     {id:"journal",t:"一句日记",ic:"book"},
     {id:"review",t:"复盘",ic:"star"},
-    {id:"inbox",t:"AI 收件箱",ic:"mail"},
   ];
   const todayCount=tasks.filter(t=>t.due===today&&!t.done).length;
   return(
@@ -3283,16 +3242,7 @@ function SideNav({th,view,setView,projects,catOf,tasks,today,setShowSettings,set
       {/* Logo */}
       <div style={{display:"flex",alignItems:"baseline",gap:1,padding:"4px 10px 14px"}}>
         <span className="display" style={{fontSize:22,color:th.ink0,letterSpacing:"-0.03em",fontWeight:700,lineHeight:1}}>Time</span>
-        {/* SVG height=17 = 22px字体基线位置(22×0.78)，使 SVG 底边恰好对齐"Time"文字基线 */}
-        <svg width="62" height="17" viewBox="0 0 62 17" style={{overflow:"visible",flexShrink:0,display:"block"}}>
-          <defs>
-            <linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stopColor={th.accent}/>
-              <stop offset="100%" stopColor={th.accent3}/>
-            </linearGradient>
-          </defs>
-          <text x="0" y="17" fontFamily="'Instrument Serif','Noto Serif SC',Georgia,serif" fontSize="22" fontStyle="italic" fontWeight="400" letterSpacing="-0.03em" fill="url(#logoGrad)">linek</text>
-        </svg>
+        <em className="display" style={{fontSize:22,fontStyle:"italic",fontWeight:400,letterSpacing:"-0.03em",lineHeight:1,background:`linear-gradient(135deg,${th.accent},${th.accent3})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",backgroundClip:"text"}}>linek</em>
       </div>
 
       {/* AI 洞察入口 */}
@@ -3308,17 +3258,14 @@ function SideNav({th,view,setView,projects,catOf,tasks,today,setShowSettings,set
       )}
 
       <div className="mono" style={{fontSize:11,letterSpacing:"0.2em",color:th.ink3,padding:"8px 10px 6px",fontWeight:600}}>WORKSPACE</div>
-      {items.map(it=>{
-        const badge=it.id==="inbox"?unreadInboxCount:0;
-        return(
-        <button key={it.id} onClick={()=>setView(it.id)} className={`nav-item ${view===it.id?"active":""}`} style={badge>0?{position:"relative"}:undefined}>
-          <Ic n={it.ic} size={14} color={view===it.id?th.accent2:(badge>0?th.accent2:th.ink3)}/>
-          <span style={{flex:1,fontWeight:badge>0?600:undefined,color:badge>0&&view!==it.id?th.ink0:undefined}}>{it.t}</span>
+      {items.map(it=>(
+        <button key={it.id} onClick={()=>setView(it.id)} className={`nav-item ${view===it.id?"active":""}`} style={it.id==="inbox"&&it.badge>0?{position:"relative"}:undefined}>
+          <Ic n={it.ic} size={14} color={view===it.id?th.accent2:(it.id==="inbox"&&it.badge>0?th.accent2:th.ink3)}/>
+          <span style={{flex:1,fontWeight:it.id==="inbox"&&it.badge>0?600:undefined,color:it.id==="inbox"&&it.badge>0&&view!==it.id?th.ink0:undefined}}>{it.t}</span>
           {it.id==="today"&&todayCount>0&&<span className="mono tnum" style={{fontSize:10,padding:"1px 7px",borderRadius:9,background:view===it.id?th.accent+"40":th.glass2,color:view===it.id?"#fff":th.ink3}}>{todayCount}</span>}
-          {badge>0&&<span className="mono tnum" style={{fontSize:10,padding:"1px 7px",borderRadius:9,background:`linear-gradient(135deg,#ec4899,#f43f5e)`,color:"#fff",fontWeight:700,boxShadow:"0 0 10px rgba(236,72,153,0.5)",animation:"breathe 2.4s ease-in-out infinite"}}>{badge}</span>}
+          {it.id==="inbox"&&it.badge>0&&<span className="mono tnum" style={{fontSize:10,padding:"1px 7px",borderRadius:9,background:`linear-gradient(135deg,#ec4899,#f43f5e)`,color:"#fff",fontWeight:700,boxShadow:"0 0 10px rgba(236,72,153,0.5)",animation:"breathe 2.4s ease-in-out infinite"}}>{it.badge}</span>}
         </button>
-        );
-      })}
+      ))}
 
       <div className="mono" style={{fontSize:11,letterSpacing:"0.2em",color:th.ink3,padding:"18px 10px 6px",display:"flex",alignItems:"center",fontWeight:600}}>
         PROJECTS
@@ -3627,16 +3574,7 @@ function MobileHeader({th,displayName,greeting,dateNum,today,syncStatus,doneAll,
       <div style={{flex:1,minWidth:0}}>
         <div style={{display:"flex",alignItems:"baseline",gap:1,marginBottom:12}}>
           <span className="display" style={{fontSize:26,color:th.ink0,letterSpacing:"-0.03em",fontWeight:700,lineHeight:1}}>Time</span>
-          {/* SVG height=20 = 26px字体基线位置(26×0.78)，对齐"Time"文字基线 */}
-          <svg width="74" height="20" viewBox="0 0 74 20" style={{overflow:"visible",flexShrink:0,display:"block"}}>
-            <defs>
-              <linearGradient id="logoGradM" x1="0%" y1="0%" x2="100%" y2="0%">
-                <stop offset="0%" stopColor={th.accent}/>
-                <stop offset="100%" stopColor={th.accent3}/>
-              </linearGradient>
-            </defs>
-            <text x="0" y="20" fontFamily="'Instrument Serif','Noto Serif SC',Georgia,serif" fontSize="26" fontStyle="italic" fontWeight="400" letterSpacing="-0.03em" fill="url(#logoGradM)">linek</text>
-          </svg>
+          <em className="display" style={{fontSize:26,fontStyle:"italic",fontWeight:400,letterSpacing:"-0.03em",lineHeight:1,background:`linear-gradient(135deg,${th.accent},${th.accent3})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",backgroundClip:"text"}}>linek</em>
           <SyncBadge status={syncStatus} th={th}/>
         </div>
         <div style={{display:"flex",alignItems:"flex-end",gap:14}}>
@@ -3676,7 +3614,7 @@ function MobileHeader({th,displayName,greeting,dateNum,today,syncStatus,doneAll,
 
 // ═══ MOBILE VIEW SWITCHER ═══
 function MobileViewSwitcher({th,view,setView}){
-  const views=[["today","今日","target"],["tomorrow","明日","arrowRight"],["week","本周","calendar"],["month","月视图","grid"],["kanban","看板","layers"],["projects","项目","folder"],["assistant","AI 助手","bot"],["activity","活动","list"],["recent","近期完成","check"],["journal","日记","book"],["review","复盘","star"],["inbox","收件箱","mail"]];
+  const views=[["today","今日","target"],["tomorrow","明日","arrowRight"],["week","本周","calendar"],["month","月视图","grid"],["kanban","看板","layers"],["projects","项目","folder"],["activity","活动","list"],["recent","近期完成","check"],["journal","日记","book"],["review","复盘","star"]];
   return(
     <div className="slim-scroll" style={{display:"flex",gap:6,marginBottom:16,overflowX:"auto",paddingBottom:2,margin:"0 -14px 16px",padding:"0 14px 2px"}}>
       {views.map(([k,label,icon])=>{
@@ -4088,9 +4026,7 @@ function InboxView({th,today,showToast,user}){
   const selected=useMemo(()=>messages.find(m=>m.id===selectedId),[messages,selectedId]);
   
   const updateMessage=(id,patch)=>{
-    // 加 updatedAt 时间戳，供 mergeInbox 判断哪端的用户操作更新（解决 archived 单向棘轮问题）
-    const ts=new Date().toISOString();
-    const next=messages.map(m=>m.id===id?{...m,...patch,updatedAt:ts}:m);
+    const next=messages.map(m=>m.id===id?{...m,...patch}:m);
     setMessages(next);
     setInbox(next);
   };
@@ -8639,7 +8575,7 @@ function Bullet({th,children}){
 
 function Settings({th,themeId,setThemeId,cats,setCats,projects,setProjects,tasks,history,setTasks,setHistory,trash,restoreTask,purgeTask,emptyTrash,tags,addTag,updateTag,removeTag,onClose,user,onSignOut,notifPerm,askNotif,installPWA,installState,today,showToast,catOf,requestProfileUpdate,requestWeeklyInsight,profileGenerating}){
   const[tab,setTab]=useState("appearance");
-  const exportJSON=()=>{const data={tasks,history,cats,projects,tags,journals,exportedAt:todayStr()};const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=`timelinek-${todayStr()}.json`;a.click();URL.revokeObjectURL(url);showToast("已导出","success");};
+  const exportJSON=()=>{const data={tasks,history,cats,projects,exportedAt:todayStr()};const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=`timelinek-${todayStr()}.json`;a.click();URL.revokeObjectURL(url);showToast("已导出","success");};
   const exportXLSX=()=>{
     try{
       const wb=XLSX.utils.book_new();

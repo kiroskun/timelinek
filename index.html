@@ -12,11 +12,11 @@
 <meta name="mobile-web-app-capable" content="yes"/>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><defs><linearGradient id='g' x1='0' y1='0.5' x2='1' y2='0.5'><stop offset='0%25' stop-color='%236d5fff'/><stop offset='50%25' stop-color='%23ec4899'/><stop offset='100%25' stop-color='%2322d3ee'/></linearGradient></defs><rect width='32' height='32' rx='6' fill='%23fafaff'/><text x='16' y='22' text-anchor='middle' font-family='Georgia,serif' font-style='italic' font-size='22' font-weight='700' fill='url(%23g)'>T</text></svg>"/>
 <link rel="manifest" href="manifest.webmanifest?v=3" id="manifest-link"/>
-<link rel="apple-touch-icon" href="apple-touch-icon.png?v=3"/>
+<link rel="apple-touch-icon" href="appletouchicon.png?v=3"/>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
 <meta name="apple-mobile-web-app-title" content="Timelinek"/>
-<link rel="apple-touch-startup-image" href="splash-1284x2778.png"/>
+<link rel="apple-touch-startup-image" href="splash1284x2778.png"/>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:ital,wght@0,600;0,700;1,700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -274,7 +274,7 @@ kbd{font-family:var(--f-mono);font-size:10px;padding:1px 5px;border-radius:3px;b
       if(ml)ml.setAttribute('href',URL.createObjectURL(blob));
     });
     // apple-touch-icon 也做 fallback：如果 apple-touch-icon.png 不存在，注入 dataURL 版
-    fetch('apple-touch-icon.png',{cache:'no-cache'}).then(r=>{
+    fetch('appletouchicon.png',{cache:'no-cache'}).then(r=>{
       if(!r.ok)throw new Error();
     }).catch(()=>{
       const apple=document.createElement('link');apple.rel='apple-touch-icon';apple.setAttribute('sizes','180x180');apple.href=makeAppIcon(180,false);
@@ -290,18 +290,19 @@ kbd{font-family:var(--f-mono);font-size:10px;padding:1px 5px;border-radius:3px;b
   setTimeout(()=>{const root=document.getElementById('root');if(root&&root.children.length===0&&box.style.display==='none'){const tips=[];if(!window.React)tips.push('❌ React 未加载');if(!window.ReactDOM)tips.push('❌ ReactDOM 未加载');if(!window.Babel)tips.push('❌ Babel 未加载');if(!window.supabase)tips.push('❌ Supabase 未加载 (cdn.jsdelivr.net 可能被墙)');if(window.React&&window.Babel&&window.supabase)tips.push('✓ 依赖都在 · 但渲染失败');show('加载超过 5 秒，页面仍为空',tips.join('\n')||'未知');}},5000);
 })();
 if('serviceWorker' in navigator){
-  // Network-first 策略：永远先尝试网络，失败时才 fallback 到缓存
-  // 这样部署新版本后用户立刻就能拿到（旧的 cache-first 会让用户卡在旧版）
-  const swCode=`const CACHE='tlk-v6';self.addEventListener('install',e=>self.skipWaiting());self.addEventListener('activate',e=>e.waitUntil((async()=>{const keys=await caches.keys();await Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)));await clients.claim();})()));self.addEventListener('fetch',e=>{if(e.request.method!=='GET')return;const u=e.request.url;if(/manifest\\.webmanifest|icon-\\d+\\.png|icon-\\d+-maskable\\.png|apple-touch-icon\\.png|splash-.*\\.png/.test(u)){e.respondWith(fetch(e.request,{cache:'reload'}).catch(()=>caches.match(e.request)));return;}e.respondWith(fetch(e.request).then(resp=>{if(resp.ok&&u.startsWith('http')){const c=resp.clone();caches.open(CACHE).then(ca=>ca.put(e.request,c));}return resp;}).catch(()=>caches.match(e.request).then(r=>r||caches.match('/'))));});`;
-  const blob=new Blob([swCode],{type:'application/javascript'});
-  navigator.serviceWorker.register(URL.createObjectURL(blob)).catch(()=>{});
-  // 检测到新 SW 后，下次访问立刻刷新（避免旧版 SW 卡死用户）
-  navigator.serviceWorker.addEventListener('controllerchange',()=>{
-    if(window._tlk_reloading)return;
-    window._tlk_reloading=true;
-    console.log('[SW] 新版本已就绪，刷新页面');
-    setTimeout(()=>location.reload(),300);
-  });
+  // 注册独立 sw.js（不使用 blob URL：blob URL 每次生成新 URL，触发 controllerchange，导致无限刷新）
+  navigator.serviceWorker.register('./sw.js').then(reg=>{
+    console.log('[SW] 注册成功，scope=',reg.scope);
+    // 检测到新 SW 时仅记录日志，不自动刷新（避免刷新循环）
+    reg.addEventListener('updatefound',()=>{
+      const nw=reg.installing;if(!nw)return;
+      nw.addEventListener('statechange',()=>{
+        if(nw.state==='installed'&&navigator.serviceWorker.controller){
+          console.log('[SW] 新版本已就绪，下次访问生效');
+        }
+      });
+    });
+  }).catch(e=>console.warn('[SW] 注册失败',e));
 }
 </script>
 <script type="text/babel">
@@ -454,7 +455,7 @@ async function forwardEmail(msg){
     else console.warn("[forwardEmail] 失败",resp.status,await resp.text());
   }catch(e){console.warn("[forwardEmail] 异常",e);}
 }
-// 合并 inbox：按 id 合并；同 id 时本地的 read/starred/archived 优先（保留用户操作）；新邮件直接加入；按时间排序
+// 合并 inbox：按 id 合并；同 id 时以 updatedAt 时间戳更新的一端为准（解决 archived 单向棘轮问题）
 function mergeInbox(local,cloud){
   const localMap=new Map((local||[]).map(m=>[m.id,m]));
   const cloudMap=new Map((cloud||[]).map(m=>[m.id,m]));
@@ -463,12 +464,21 @@ function mergeInbox(local,cloud){
   allIds.forEach(id=>{
     const l=localMap.get(id),c=cloudMap.get(id);
     if(l&&c){
-      // 同 id：内容以云端为准，但用户操作（read/starred/archived）优先取「true 值」（即任一端标记过就算）
+      // 内容以云端为准；用户操作状态（read/starred/archived）以 updatedAt 更新更晚的一端为准
+      // 如果没有 updatedAt（旧数据），fallback 到 OR 合并（保持向后兼容）
+      const lUpd=l.updatedAt||"";
+      const cUpd=c.updatedAt||"";
+      let stateSource;
+      if(lUpd&&cUpd){stateSource=lUpd>=cUpd?l:c;}
+      else if(lUpd){stateSource=l;}
+      else if(cUpd){stateSource=c;}
+      else{stateSource={read:l.read||c.read,starred:l.starred||c.starred,archived:l.archived||c.archived};}
       merged.push({
         ...c,
-        read:l.read||c.read,
-        starred:l.starred||c.starred,
-        archived:l.archived||c.archived,
+        read:stateSource.read,
+        starred:stateSource.starred,
+        archived:stateSource.archived,
+        updatedAt:lUpd>=cUpd?lUpd:cUpd,
       });
     }else{
       merged.push(l||c);
@@ -732,7 +742,7 @@ const GREETINGS=[
 // ═══ HELPERS ═══
 function todayStr(){const d=new Date();return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}
 function dateStr(d){return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}
-function addDays(ds,n){const d=new Date(ds);d.setDate(d.getDate()+n);return dateStr(d);}
+function addDays(ds,n){const d=new Date(ds+"T00:00:00");d.setDate(d.getDate()+n);return dateStr(d);}
 function calcMin(s,e){try{const[sh,sm]=s.split(":").map(Number),[eh,em]=e.split(":").map(Number);const d=(eh*60+em)-(sh*60+sm);return d>0?d:null;}catch{return null;}}
 function timeToMin(t){try{const[h,m]=t.split(":").map(Number);return h*60+m;}catch{return null;}}
 function fmtMin(m){if(m==null||isNaN(m))return"";m=Math.round(m);if(m<60)return m+"min";const h=Math.floor(m/60),r=m%60;return h+"h"+(r?r+"m":"");}
@@ -1864,7 +1874,6 @@ const IC_PATHS={
   calendar:<><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></>,
   clock:<><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></>,
   timer:<><circle cx="12" cy="13" r="8"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="9" y1="2" x2="15" y2="2"/></>,
-  inbox:<><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z"/></>,
   flame:<path d="M12 2s6 6 6 12a6 6 0 01-12 0c0-2 1-4 2-5 0 2 1 3 2 3 0-3 1-6 2-10z"/>,
   star:<polygon points="12 2 15.1 8.3 22 9.3 17 14.1 18.2 21 12 17.8 5.8 21 7 14.1 2 9.3 8.9 8.3 12 2"/>,
   user:<><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></>,
@@ -1874,7 +1883,6 @@ const IC_PATHS={
   trash:<><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></>,
   hash:<><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></>,
   book:<><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></>,
-  filter:<polygon points="22 3 2 3 10 12.5 10 19 14 21 14 12.5 22 3"/>,
   target:<><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/></>,
   layers:<><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></>,
   grid:<><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></>,
@@ -4026,7 +4034,9 @@ function InboxView({th,today,showToast,user}){
   const selected=useMemo(()=>messages.find(m=>m.id===selectedId),[messages,selectedId]);
   
   const updateMessage=(id,patch)=>{
-    const next=messages.map(m=>m.id===id?{...m,...patch}:m);
+    // 加 updatedAt 时间戳，供 mergeInbox 判断哪端的用户操作更新（解决 archived 单向棘轮问题）
+    const ts=new Date().toISOString();
+    const next=messages.map(m=>m.id===id?{...m,...patch,updatedAt:ts}:m);
     setMessages(next);
     setInbox(next);
   };

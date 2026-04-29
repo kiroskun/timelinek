@@ -3274,7 +3274,16 @@ function SideNav({th,view,setView,projects,catOf,tasks,today,setShowSettings,set
       {/* Logo */}
       <div style={{display:"flex",alignItems:"baseline",gap:1,padding:"4px 10px 14px"}}>
         <span className="display" style={{fontSize:22,color:th.ink0,letterSpacing:"-0.03em",fontWeight:700,lineHeight:1}}>Time</span>
-        <em className="display" style={{fontSize:22,fontStyle:"italic",fontWeight:400,letterSpacing:"-0.03em",lineHeight:1,display:"inline-block",background:`linear-gradient(135deg,${th.accent},${th.accent3})`,WebkitBackgroundClip:"text",backgroundClip:"text",color:"transparent",WebkitTextFillColor:"transparent",paddingRight:"0.1em"}}>linek</em>
+        {/* SVG text + linearGradient：backdrop-filter 内唯一可靠的渐变文字方案 */}
+        <svg width="58" height="26" viewBox="0 0 58 26" style={{overflow:"visible",flexShrink:0}}>
+          <defs>
+            <linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor={th.accent}/>
+              <stop offset="100%" stopColor={th.accent3}/>
+            </linearGradient>
+          </defs>
+          <text x="0" y="20" fontFamily="'Instrument Serif','Noto Serif SC',Georgia,serif" fontSize="22" fontStyle="italic" fontWeight="400" letterSpacing="-0.03em" fill="url(#logoGrad)">linek</text>
+        </svg>
       </div>
 
       {/* AI 洞察入口 */}
@@ -3609,7 +3618,16 @@ function MobileHeader({th,displayName,greeting,dateNum,today,syncStatus,doneAll,
       <div style={{flex:1,minWidth:0}}>
         <div style={{display:"flex",alignItems:"baseline",gap:1,marginBottom:12}}>
           <span className="display" style={{fontSize:26,color:th.ink0,letterSpacing:"-0.03em",fontWeight:700,lineHeight:1}}>Time</span>
-          <em className="display" style={{fontSize:26,fontStyle:"italic",fontWeight:400,letterSpacing:"-0.03em",lineHeight:1,display:"inline-block",background:`linear-gradient(135deg,${th.accent},${th.accent3})`,WebkitBackgroundClip:"text",backgroundClip:"text",color:"transparent",WebkitTextFillColor:"transparent",paddingRight:"0.1em"}}>linek</em>
+          {/* SVG text 渐变：避免 backdrop-filter 内 background-clip 失效问题 */}
+          <svg width="68" height="30" viewBox="0 0 68 30" style={{overflow:"visible",flexShrink:0}}>
+            <defs>
+              <linearGradient id="logoGradM" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stopColor={th.accent}/>
+                <stop offset="100%" stopColor={th.accent3}/>
+              </linearGradient>
+            </defs>
+            <text x="0" y="24" fontFamily="'Instrument Serif','Noto Serif SC',Georgia,serif" fontSize="26" fontStyle="italic" fontWeight="400" letterSpacing="-0.03em" fill="url(#logoGradM)">linek</text>
+          </svg>
           <SyncBadge status={syncStatus} th={th}/>
         </div>
         <div style={{display:"flex",alignItems:"flex-end",gap:14}}>

@@ -596,26 +596,239 @@ const AI_WORKER_URL="/api/ai";
 const EMAIL_API_URL="/api/email";
 const EMAIL_FORWARD_KEY="tlk_email_forward_v1"; // 转发邮箱地址
 
-// 通用 AI 调用：通过 Cloudflare Worker 中转到 DeepSeek
-// 参数：messages 数组、可选 options（temperature/max_tokens 等）
+// ═══════════════════════════════════════
+// AI MULTI-PROVIDER ROUTING
+// ═══════════════════════════════════════
+// 默认走 Worker（DeepSeek 免配置体验）
+// 用户可在设置中切换为：openai / anthropic / gemini / openai_compat（OpenRouter/Groq/自定义）
+const AI_CONFIG_KEY="tlk_ai_v1";
+const AI_PROVIDERS={
+  default:{label:"默认（DeepSeek · 免配置）",models:[],supportsTools:true},
+  openai:{
+    label:"OpenAI",
+    endpoint:"https://api.openai.com/v1/chat/completions",
+    models:["gpt-5","gpt-5-mini","gpt-4.1","gpt-4.1-mini","gpt-4o","gpt-4o-mini","o4-mini"],
+    defaultModel:"gpt-4.1-mini",
+    supportsTools:true,
+  },
+  anthropic:{
+    label:"Anthropic Claude",
+    endpoint:"https://api.anthropic.com/v1/messages",
+    models:["claude-opus-4-5","claude-sonnet-4-5","claude-haiku-4-5","claude-3-5-sonnet-latest","claude-3-5-haiku-latest"],
+    defaultModel:"claude-sonnet-4-5",
+    supportsTools:false, // 第一版工具调用仅 OpenAI 兼容（Anthropic tools 格式不同）
+  },
+  gemini:{
+    label:"Google Gemini",
+    endpoint:"https://generativelanguage.googleapis.com/v1beta/models",
+    models:["gemini-2.5-pro","gemini-2.5-flash","gemini-2.0-flash","gemini-2.0-flash-lite"],
+    defaultModel:"gemini-2.5-flash",
+    supportsTools:false,
+  },
+  openai_compat:{
+    label:"OpenAI 兼容（DeepSeek/Groq/OpenRouter/Ollama/自定义）",
+    endpoint:"",
+    models:[],
+    defaultModel:"",
+    supportsTools:true,
+  },
+};
+function getAIConfig(){
+  try{const r=localStorage.getItem(AI_CONFIG_KEY);if(r)return JSON.parse(r);}catch{}
+  return{provider:"default"};
+}
+function setAIConfigStored(cfg){try{localStorage.setItem(AI_CONFIG_KEY,JSON.stringify(cfg));}catch{}}
+function aiSupportsTools(){
+  const c=getAIConfig();
+  return AI_PROVIDERS[c.provider||"default"]?.supportsTools!==false;
+}
+
+// 路由 callAI（旧调用点全部沿用）
 async function callAI(messages,options={}){
+  const cfg=getAIConfig();
+  const p=cfg.provider||"default";
+  // 调用点 reasoningEffort 没显式指定时，用用户在设置里的全局默认值
+  // 优先级：调用点显式传入 > 用户配置 > 不启用
+  if(options.reasoningEffort===undefined&&cfg.reasoningEffort){
+    // 但只在调用点确实启用了 reasoning（即原本传了非 undefined 值）才使用
+    // 这里反过来：如果调用点完全没传，不强制启用（避免简单查询也思考）
+  }
+  if(p==="default")return callViaWorker(messages,options);
+  if(p==="anthropic")return callAnthropic(messages,options,cfg);
+  if(p==="gemini")return callGemini(messages,options,cfg);
+  // openai / openai_compat — 都是 OpenAI 兼容格式
+  return callOpenAICompat(messages,options,cfg);
+}
+
+// 用户全局推理强度（用于已启用 reasoning 的调用点，让用户能调档）
+function userReasoningEffort(){
+  const cfg=getAIConfig();
+  return cfg.reasoningEffort||"medium";
+}
+
+// ─── Provider: OpenAI 兼容（OpenAI / DeepSeek / Groq / OpenRouter / Ollama / 任意 OpenAI 兼容 endpoint）───
+async function callOpenAICompat(messages,options,cfg){
+  const provider=cfg.provider==="openai"?"openai":"openai_compat";
+  let endpoint,model;
+  if(provider==="openai"){
+    endpoint=AI_PROVIDERS.openai.endpoint;
+    model=cfg.model||AI_PROVIDERS.openai.defaultModel;
+  }else{
+    endpoint=cfg.endpoint||"";
+    model=cfg.model||"";
+    if(!endpoint)throw new Error("请在设置中填写 API Endpoint");
+    if(!model)throw new Error("请在设置中填写 Model 名称");
+    // 确保 endpoint 以 /chat/completions 结尾（OpenRouter 等需要）
+    if(!endpoint.includes("/chat/completions")){
+      endpoint=endpoint.replace(/\/$/,"")+"/chat/completions";
+    }
+  }
+  if(!cfg.apiKey)throw new Error("请在设置中配置 API Key");
+  const ctrl=new AbortController();const tm=setTimeout(()=>ctrl.abort(),90000);
+  const body={model,messages};
+  if(options.temperature!==undefined)body.temperature=options.temperature;
+  if(options.max_tokens)body.max_tokens=options.max_tokens;
+  if(options.tools)body.tools=options.tools;
+  if(options.tool_choice)body.tool_choice=options.tool_choice;
+  if(options.jsonMode)body.response_format={type:"json_object"};
+  if(options.reasoningEffort){body.reasoning_effort=options.reasoningEffort;body.thinking={type:"enabled"};}
+  // OpenRouter 需要 referer + title header（可选但推荐）
+  const headers={"Content-Type":"application/json","Authorization":`Bearer ${cfg.apiKey}`};
+  if(endpoint.includes("openrouter.ai")){
+    headers["HTTP-Referer"]=location.origin;
+    headers["X-Title"]="Timelinek";
+  }
+  let resp;
+  try{resp=await fetch(endpoint,{method:"POST",headers,body:JSON.stringify(body),signal:ctrl.signal});}
+  catch(e){clearTimeout(tm);if(e.name==="AbortError")throw new Error("AI 响应超时（90秒）");throw new Error("网络失败: "+(e.message||"未知"));}
+  clearTimeout(tm);
+  if(!resp.ok){
+    let errMsg=`HTTP ${resp.status}`;
+    try{const err=await resp.json();errMsg+=" · "+(err.error?.message||err.error||JSON.stringify(err).slice(0,200));}
+    catch{try{const t=await resp.text();if(t)errMsg+=" · "+t.slice(0,200);}catch{}}
+    throw new Error(errMsg);
+  }
+  const result=await resp.json();
+  return result.choices?.[0]?.message?.content||"";
+}
+
+// ─── Provider: Anthropic Claude（messages API） ───
+async function callAnthropic(messages,options,cfg){
+  if(!cfg.apiKey)throw new Error("请在设置中配置 Anthropic API Key");
+  const model=cfg.model||AI_PROVIDERS.anthropic.defaultModel;
+  // Anthropic 把 system 作为顶层字段，messages 里只能有 user/assistant
+  let systemPrompt="";
+  const cleanMessages=[];
+  messages.forEach(m=>{
+    if(m.role==="system")systemPrompt+=(systemPrompt?"\n\n":"")+(m.content||"");
+    else cleanMessages.push({role:m.role,content:m.content});
+  });
+  const body={
+    model,
+    messages:cleanMessages,
+    max_tokens:options.max_tokens||2000,
+    temperature:options.temperature??0.7,
+  };
+  if(systemPrompt)body.system=systemPrompt;
+  const ctrl=new AbortController();const tm=setTimeout(()=>ctrl.abort(),90000);
+  let resp;
+  try{
+    resp=await fetch(AI_PROVIDERS.anthropic.endpoint,{
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json",
+        "x-api-key":cfg.apiKey,
+        "anthropic-version":"2023-06-01",
+        "anthropic-dangerous-direct-browser-access":"true",
+      },
+      body:JSON.stringify(body),
+      signal:ctrl.signal,
+    });
+  }catch(e){clearTimeout(tm);if(e.name==="AbortError")throw new Error("AI 响应超时（90秒）");throw new Error("网络失败: "+(e.message||"未知"));}
+  clearTimeout(tm);
+  if(!resp.ok){
+    let errMsg=`HTTP ${resp.status}`;
+    try{const err=await resp.json();errMsg+=" · "+(err.error?.message||JSON.stringify(err).slice(0,200));}catch{}
+    throw new Error(errMsg);
+  }
+  const result=await resp.json();
+  // Anthropic 返回 content 是数组，取所有 text type 拼接
+  const textBlocks=(result.content||[]).filter(b=>b.type==="text");
+  return textBlocks.map(b=>b.text).join("");
+}
+
+// ─── Provider: Google Gemini ───
+async function callGemini(messages,options,cfg){
+  if(!cfg.apiKey)throw new Error("请在设置中配置 Gemini API Key");
+  const model=cfg.model||AI_PROVIDERS.gemini.defaultModel;
+  // Gemini 格式：user → user，assistant → model；content 是 parts:[{text:"..."}]
+  // system instruction 是顶层字段 systemInstruction
+  let systemPrompt="";
+  const contents=[];
+  messages.forEach(m=>{
+    if(m.role==="system")systemPrompt+=(systemPrompt?"\n\n":"")+(m.content||"");
+    else contents.push({role:m.role==="assistant"?"model":"user",parts:[{text:m.content||""}]});
+  });
+  const body={
+    contents,
+    generationConfig:{
+      temperature:options.temperature??0.7,
+      maxOutputTokens:options.max_tokens||2000,
+    },
+  };
+  if(systemPrompt)body.systemInstruction={parts:[{text:systemPrompt}]};
+  const url=`${AI_PROVIDERS.gemini.endpoint}/${model}:generateContent?key=${encodeURIComponent(cfg.apiKey)}`;
+  const ctrl=new AbortController();const tm=setTimeout(()=>ctrl.abort(),90000);
+  let resp;
+  try{resp=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),signal:ctrl.signal});}
+  catch(e){clearTimeout(tm);if(e.name==="AbortError")throw new Error("AI 响应超时（90秒）");throw new Error("网络失败: "+(e.message||"未知"));}
+  clearTimeout(tm);
+  if(!resp.ok){
+    let errMsg=`HTTP ${resp.status}`;
+    try{const err=await resp.json();errMsg+=" · "+(err.error?.message||JSON.stringify(err).slice(0,200));}catch{}
+    throw new Error(errMsg);
+  }
+  const result=await resp.json();
+  const parts=result.candidates?.[0]?.content?.parts||[];
+  return parts.map(p=>p.text||"").join("");
+}
+
+// ─── 默认 Provider：通过 Cloudflare Worker 中转到 DeepSeek V4（充分利用 V4 能力）───
+// 透传所有 OpenAI 兼容参数：response_format（JSON Mode）/ thinking / reasoning_effort 等
+async function callViaWorker(messages,options={},_retry=0){
   const{data}=await supabase.auth.getSession();
   const token=data.session?.access_token;
   if(!token)throw new Error("未登录，请先登录");
-  // 60 秒超时控制
+  // 90 秒超时控制（DeepSeek V4 思考模式响应可能更长）
   const controller=new AbortController();
-  const timeout=setTimeout(()=>controller.abort(),60000);
+  const timeout=setTimeout(()=>controller.abort(),90000);
+  // 构造请求体：透传 options 全部参数
+  const body={messages};
+  if(options.temperature!==undefined)body.temperature=options.temperature;
+  if(options.max_tokens)body.max_tokens=options.max_tokens;
+  if(options.tools)body.tools=options.tools;
+  if(options.tool_choice)body.tool_choice=options.tool_choice;
+  // JSON Mode：用户开启时强制 JSON 输出，从根本解决"AI 返回格式异常"
+  if(options.jsonMode)body.response_format={type:"json_object"};
+  // 思考模式：reasoning_effort 控制思考强度（low/medium/high/max）
+  if(options.reasoningEffort){
+    body.reasoning_effort=options.reasoningEffort;
+    body.thinking={type:"enabled"};
+  }
+  if(options.stream)body.stream=true;
   let resp;
   try{
     resp=await fetch(AI_WORKER_URL,{
       method:"POST",
       headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
-      body:JSON.stringify({messages,...options}),
+      body:JSON.stringify(body),
       signal:controller.signal,
     });
   }catch(e){
     clearTimeout(timeout);
-    if(e.name==="AbortError")throw new Error("AI 响应超时（60秒）· 请重试或减少任务数量");
+    if(e.name==="AbortError")throw new Error("AI 响应超时（90秒）· 请重试或减少数据量");
+    // 网络错误自动重试一次
+    if(_retry===0){console.warn("[callViaWorker] 网络失败，自动重试...");await new Promise(r=>setTimeout(r,800));return callViaWorker(messages,options,1);}
     throw new Error("网络请求失败: "+(e.message||"未知"));
   }
   clearTimeout(timeout);
@@ -793,7 +1006,7 @@ ${projNames?`正在进行的项目：${projNames}\n`:""}
   const content=await callAI([
     {role:"system",content:"你是任务文本解析助手。严格按 JSON 格式返回，不解释。"},
     {role:"user",content:prompt}
-  ],{temperature:0.2,max_tokens:400});
+  ],{temperature:0.2,max_tokens:600,jsonMode:true});
   let jsonStr=content.trim();
   const m=jsonStr.match(/```(?:json)?\s*([\s\S]+?)\s*```/);
   if(m)jsonStr=m[1];
@@ -811,14 +1024,42 @@ ${projNames?`正在进行的项目：${projNames}\n`:""}
 // ═══ AI 助手对话工具 ═══
 // 系统 prompt 模板：把用户数据注入上下文
 function buildAssistantSystemPrompt(ctx){
-  const{tasks=[],cats=[],projects=[],tags=[],journals=[],today=todayStr(),displayName=""}=ctx;
+  const{tasks=[],cats=[],projects=[],tags=[],journals=[],history=[],today=todayStr(),displayName=""}=ctx;
+  const catName=id=>cats.find(c=>c.id===id)?.name||id;
+  const projName=id=>projects.find(p=>p.id===id)?.name||"";
+  const tagName=id=>tags.find(t=>t.id===id)?.name||"";
   const undone=tasks.filter(t=>!t.done);
   const overdue=undone.filter(t=>t.due&&t.due<today);
   const todayList=undone.filter(t=>t.due===today);
   const future=undone.filter(t=>t.due&&t.due>today);
+  const noDate=undone.filter(t=>!t.due);
+  const recentDone=tasks.filter(t=>t.done&&t.completedAt&&t.completedAt>=addDays(today,-14)).slice(-30);
   const activeProjects=projects.filter(p=>p.startDate&&p.endDate&&p.startDate<=today&&today<=p.endDate);
-  const recentJournals=journals.slice(-3).map(j=>`${j.date}: ${j.wish||""}${j.mood?" "+j.mood:""}`).filter(Boolean);
+  const recentJournals=journals.slice(-7).map(j=>`${j.date}: ${j.wish||""}${j.mood?" "+j.mood:""}`).filter(Boolean);
   const catLines=cats.map(c=>`${c.id}=${c.name}`).join(", ");
+  // 任务详情格式化（紧凑但完整）
+  const fmt=(t,short=false)=>{
+    const parts=[`【${t.priority||"中"}】${t.title}`];
+    if(t.due)parts.push(`📅${t.due}`);
+    if(t.timeStart)parts.push(`⏰${t.timeStart}${t.timeEnd?"-"+t.timeEnd:""}`);
+    if(t.duration)parts.push(`⏱${t.duration}min`);
+    if(t.category)parts.push(`#${catName(t.category)}`);
+    if(t.projectId&&projName(t.projectId))parts.push(`📂${projName(t.projectId)}`);
+    if(Array.isArray(t.tagIds)&&t.tagIds.length)parts.push(t.tagIds.map(id=>`#${tagName(id)}`).filter(Boolean).join(""));
+    if(t.progress>0&&t.progress<1)parts.push(`📊${Math.round(t.progress*100)}%`);
+    if(t.actualMin>0)parts.push(`已用${Math.round(t.actualMin)}min`);
+    if(!short&&t.content)parts.push(`备注:${String(t.content).slice(0,80)}`);
+    return"  • "+parts.join(" · ");
+  };
+  // 历史完成统计（最近 14 天）
+  const histLines=history.filter(h=>h.date>=addDays(today,-14)&&h.date<today)
+    .sort((a,b)=>b.date.localeCompare(a.date))
+    .slice(0,14)
+    .map(h=>{
+      const d=h.tasks?.filter(t=>t.done).length||0;
+      const dur=h.tasks?.reduce((s,t)=>s+(t.actualMin||0),0)||0;
+      return`  • ${h.date}: 完成 ${d} 项 · 专注 ${Math.round(dur)}min`;
+    }).join("\n");
   // 注入个人画像（如有）
   const profile=getProfile();
   const profileBlock=profile?`
@@ -839,28 +1080,58 @@ ${Array.isArray(profile.preferences)&&profile.preferences.length?`偏好：${pro
   return`你是 Timelinek 应用的 AI 助手，帮 ${displayName||"用户"} 管理任务和规划生活。
 ${profileBlock}
 
-# 当前数据快照（${today}）
-- 总任务：${tasks.length}（已完成 ${tasks.length-undone.length}，未完成 ${undone.length}）
-- 逾期：${overdue.length} 项${overdue.length>0?`（最早 ${overdue[0].due}）`:""}
-- 今日：${todayList.length} 项
-- 未来：${future.length} 项
-- 活跃项目：${activeProjects.length>0?activeProjects.map(p=>`「${p.name}」(${p.startDate}~${p.endDate})`).join(", "):"无"}
-- 标签：${tags.length>0?tags.map(t=>"#"+t.name).join(" "):"无"}
-- 分类映射：${catLines}
-${recentJournals.length>0?`- 近期日记：\n${recentJournals.join("\n")}`:""}
+# 当前数据快照（${today} ${weekdayCN(today)}）
 
-# 你的能力
-1. 回答关于任务、计划、效率的问题
-2. 分析用户的工作模式、习惯、瓶颈
+## 概览
+- 总任务：${tasks.length}（已完成 ${tasks.length-undone.length}，未完成 ${undone.length}）
+- 逾期：${overdue.length} 项 · 今日：${todayList.length} 项 · 未来：${future.length} 项 · 无日期：${noDate.length} 项
+- 活跃项目：${activeProjects.length>0?activeProjects.map(p=>`「${p.name}」(${p.startDate}~${p.endDate})`).join(", "):"无"}
+- 标签库：${tags.length>0?tags.map(t=>"#"+t.name).join(" "):"无"}
+- 分类映射：${catLines}
+
+${overdue.length>0?`## 🔥 逾期任务（${overdue.length} 项，按时间排序）
+${overdue.sort((a,b)=>(a.due||"").localeCompare(b.due||"")).map(t=>fmt(t)).join("\n")}
+
+`:""}${todayList.length>0?`## 📌 今日任务（${todayList.length} 项）
+${todayList.sort((a,b)=>(a.timeStart||"99:99").localeCompare(b.timeStart||"99:99")).map(t=>fmt(t)).join("\n")}
+
+`:""}${future.length>0?`## 📆 未来任务（前 50 项）
+${future.sort((a,b)=>(a.due||"").localeCompare(b.due||"")).slice(0,50).map(t=>fmt(t,true)).join("\n")}
+
+`:""}${noDate.length>0?`## 📭 待安排（无日期，前 30 项）
+${noDate.slice(0,30).map(t=>fmt(t,true)).join("\n")}
+
+`:""}${recentDone.length>0?`## ✅ 近 14 天完成任务（前 30 项）
+${recentDone.map(t=>`  • ${t.completedAt} 「${t.title}」${t.actualMin>0?` 用时${Math.round(t.actualMin)}min`:""}${t.category?` #${catName(t.category)}`:""}`).join("\n")}
+
+`:""}${histLines?`## 📊 近 14 天每日完成统计
+${histLines}
+
+`:""}${activeProjects.length>0?`## 📂 项目详情
+${activeProjects.map(p=>{
+  const projTasks=tasks.filter(t=>t.projectId===p.id);
+  const done=projTasks.filter(t=>t.done).length;
+  return`  • 「${p.name}」${p.startDate}~${p.endDate} · 进度 ${done}/${projTasks.length}${p.description?` · ${String(p.description).slice(0,60)}`:""}`;
+}).join("\n")}
+
+`:""}${recentJournals.length>0?`## 📔 近期日记
+${recentJournals.join("\n")}
+
+`:""}# 你的能力
+1. 回答关于任务、计划、效率的问题（基于上面真实数据，不要编造）
+2. 分析用户的工作模式、习惯、瓶颈、节奏
 3. 通过 function call 帮用户增删改任务（创建/修改/删除/列表）
-4. 适当闲聊，但优先聚焦在任务管理上
-5. 如果用户上传了文件，基于文件内容回答
+4. 提供具体可执行的建议（不是空洞的"加油"）
+5. 闲聊也可以，但优先聚焦在任务管理上
+6. 如果用户上传了文件，基于文件内容回答
 
 # 行为规则
-- 中文回答，简洁直接，不啰嗦
-- 重要操作（删除任务、批量修改）执行前要先描述清楚再做
-- 不知道的事情就说不知道，不编造
-- 当前时间是 ${today}`;
+- 中文回答，简洁直接，不啰嗦废话
+- 用户问"我有什么任务"时直接列出来（你已经看到了），不要又调一遍 list_tasks
+- 重要操作（删除任务、批量修改）执行前先描述清楚再做
+- 引用任务时用 ID 而非标题，避免歧义
+- 不知道的事情就说不知道，绝不编造
+- 当前时间是 ${today}（${weekdayCN(today)}）`;
 }
 
 // AI 助手可调用的工具列表（OpenAI function calling 格式）
@@ -957,21 +1228,65 @@ async function callAssistantWithTools(messages,handlers,onProgress){
   let rounds=0;
   while(rounds<5){ // 最多 5 轮 tool 调用，防死循环
     rounds++;
-    const{data}=await supabase.auth.getSession();
-    const token=data.session?.access_token;
-    if(!token)throw new Error("未登录");
-    const ctrl=new AbortController();
-    const tm=setTimeout(()=>ctrl.abort(),90000);
+    const cfg=getAIConfig();
+    const provider=cfg.provider||"default";
+    const supportsTools=AI_PROVIDERS[provider]?.supportsTools!==false;
+    
+    // ─── Provider 不支持 tools：降级为纯对话模式 ───
+    if(!supportsTools){
+      try{
+        // 直接调 callAI（无 tools）拿一次回复就结束
+        const text=await callAI(conversation,{temperature:0.7,max_tokens:1500});
+        const fakeMsg={role:"assistant",content:text||""};
+        conversation.push(fakeMsg);
+        return{content:fakeMsg.content,conversation,toolsDisabled:true};
+      }catch(e){throw e;}
+    }
+    
+    // ─── 支持 tools 的 Provider（default/openai/openai_compat）───
+    // 启用流式输出 — 用户体验提升 + 拉大 max_tokens 到 4000（V4 支持 384K 输出）
     let resp;
-    try{
-      resp=await fetch(AI_WORKER_URL,{
-        method:"POST",
-        headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
-        body:JSON.stringify({messages:conversation,tools:ASSISTANT_TOOLS,tool_choice:"auto",temperature:0.7,max_tokens:1500}),
-        signal:ctrl.signal,
-      });
-    }catch(e){clearTimeout(tm);if(e.name==="AbortError")throw new Error("AI 响应超时");throw new Error("网络失败: "+(e.message||"未知"));}
+    const ctrl=new AbortController();
+    const tm=setTimeout(()=>ctrl.abort(),120000); // 流式时长：2 分钟超时
+    const reqBody={messages:conversation,tools:ASSISTANT_TOOLS,tool_choice:"auto",temperature:0.7,max_tokens:4000,stream:true};
+    
+    if(provider==="default"){
+      const{data}=await supabase.auth.getSession();
+      const token=data.session?.access_token;
+      if(!token)throw new Error("未登录");
+      try{
+        resp=await fetch(AI_WORKER_URL,{
+          method:"POST",
+          headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
+          body:JSON.stringify(reqBody),
+          signal:ctrl.signal,
+        });
+      }catch(e){clearTimeout(tm);if(e.name==="AbortError")throw new Error("AI 响应超时");throw new Error("网络失败: "+(e.message||"未知"));}
+    }else{
+      let endpoint,model;
+      if(provider==="openai"){
+        endpoint=AI_PROVIDERS.openai.endpoint;
+        model=cfg.model||AI_PROVIDERS.openai.defaultModel;
+      }else{
+        endpoint=cfg.endpoint||"";
+        model=cfg.model||"";
+        if(!endpoint||!model){clearTimeout(tm);throw new Error("请在设置中完成 Provider 配置");}
+        if(!endpoint.includes("/chat/completions"))endpoint=endpoint.replace(/\/$/,"")+"/chat/completions";
+      }
+      if(!cfg.apiKey){clearTimeout(tm);throw new Error("请在设置中配置 API Key");}
+      const headers={"Content-Type":"application/json","Authorization":`Bearer ${cfg.apiKey}`};
+      if(endpoint.includes("openrouter.ai")){headers["HTTP-Referer"]=location.origin;headers["X-Title"]="Timelinek";}
+      try{
+        resp=await fetch(endpoint,{
+          method:"POST",
+          headers,
+          body:JSON.stringify({model,...reqBody}),
+          signal:ctrl.signal,
+        });
+      }catch(e){clearTimeout(tm);if(e.name==="AbortError")throw new Error("AI 响应超时");throw new Error("网络失败: "+(e.message||"未知"));}
+    }
     clearTimeout(tm);
+    
     if(!resp.ok){
       let errMsg=`HTTP ${resp.status}`;
       try{
@@ -985,9 +1300,49 @@ async function callAssistantWithTools(messages,handlers,onProgress){
       }
       throw new Error(errMsg);
     }
-    const result=await resp.json();
-    const msg=result.choices?.[0]?.message;
-    if(!msg)throw new Error("AI 无返回");
+    
+    // ─── 流式 SSE 解析：累积 content 和 tool_calls ───
+    const msg={role:"assistant",content:"",tool_calls:[]};
+    const reader=resp.body.getReader();
+    const decoder=new TextDecoder();
+    let buffer="";
+    while(true){
+      const{value,done:streamDone}=await reader.read();
+      if(streamDone)break;
+      buffer+=decoder.decode(value,{stream:true});
+      // SSE 按双换行分块
+      let lines=buffer.split("\n");
+      buffer=lines.pop()||""; // 最后一行可能不完整，留到下次
+      for(const line of lines){
+        if(!line.startsWith("data: "))continue;
+        const data=line.slice(6).trim();
+        if(data==="[DONE]")continue;
+        if(!data)continue;
+        try{
+          const chunk=JSON.parse(data);
+          const delta=chunk.choices?.[0]?.delta;
+          if(!delta)continue;
+          // 累积文本
+          if(delta.content){
+            msg.content+=delta.content;
+            onProgress&&onProgress({type:"content_delta",text:delta.content,full:msg.content});
+          }
+          // 累积 tool_calls（每个 delta 可能含部分 arguments JSON 字符串）
+          if(delta.tool_calls){
+            for(const tcDelta of delta.tool_calls){
+              const idx=tcDelta.index||0;
+              if(!msg.tool_calls[idx])msg.tool_calls[idx]={id:"",type:"function",function:{name:"",arguments:""}};
+              if(tcDelta.id)msg.tool_calls[idx].id=tcDelta.id;
+              if(tcDelta.function?.name)msg.tool_calls[idx].function.name+=tcDelta.function.name;
+              if(tcDelta.function?.arguments)msg.tool_calls[idx].function.arguments+=tcDelta.function.arguments;
+            }
+          }
+        }catch(e){console.warn("[stream] chunk parse failed",e,data.slice(0,80));}
+      }
+    }
+    // 没 tool_calls 就清掉空数组
+    if(msg.tool_calls.length===0)delete msg.tool_calls;
+    if(!msg.content&&!msg.tool_calls)throw new Error("AI 无返回");
     conversation.push(msg);
     // 没有 tool calls 就是最终回复
     if(!msg.tool_calls||msg.tool_calls.length===0){
@@ -1042,7 +1397,9 @@ async function extractFileText(file){
 async function aiDailyReport({date,tasks,history,catOf,projOf,journals}){
   // 取该日所有相关任务（done/在历史中的/在 tasks 里 due===date 的）
   const histEntry=history.find(h=>h.date===date);
-  const histTasks=histEntry?histEntry.tasks:[];
+  // 防御性过滤：即便老 history 数据被污染（存了全量任务），也只取当日相关
+  // 当日相关 = due === date 或 completedAt === date
+  const histTasks=(histEntry?histEntry.tasks:[]).filter(t=>(t.due===date)||(t.completedAt===date)||(!t.due&&!t.completedAt));
   const liveTasks=tasks.filter(t=>t.due===date||t.completedAt===date);
   // 合并去重
   const seen=new Set();
@@ -1103,7 +1460,7 @@ ${taskLines}
   const content=await callAI([
     {role:"system",content:"你是用户的私人复盘教练，洞察敏锐，语言精准温暖。严格按 JSON 格式返回。"},
     {role:"user",content:prompt}
-  ],{temperature:0.6,max_tokens:1500});
+  ],{temperature:0.6,max_tokens:4000,jsonMode:true,reasoningEffort:userReasoningEffort()});
   let jsonStr=content.trim();
   const m=jsonStr.match(/```(?:json)?\s*([\s\S]+?)\s*```/);
   if(m)jsonStr=m[1];
@@ -1228,7 +1585,7 @@ ${weekJournals.map(j=>`${j.date}: ${j.wish||""}${j.mood?" "+j.mood:""}`).join("\
   const content=await callAI([
     {role:"system",content:"你是用户的私人成长教练，擅长从每周数据中发现规律、给出具体可执行的建议。"},
     {role:"user",content:prompt}
-  ],{temperature:0.6,max_tokens:2000});
+  ],{temperature:0.6,max_tokens:5000,jsonMode:true,reasoningEffort:userReasoningEffort()});
   let jsonStr=content.trim();
   const m=jsonStr.match(/```(?:json)?\s*([\s\S]+?)\s*```/);
   if(m)jsonStr=m[1];
@@ -1384,7 +1741,7 @@ ${dailyData.slice(-7).map(d=>d.doneTitles.length?`${d.date}: ${d.doneTitles.join
   const content=await callAI([
     {role:"system",content:"你是擅长行为模式分析的心理画像师。基于数据精准推断，不夸大不编造。严格 JSON 输出。"},
     {role:"user",content:prompt}
-  ],{temperature:0.4,max_tokens:1500});
+  ],{temperature:0.4,max_tokens:3500,jsonMode:true,reasoningEffort:userReasoningEffort()});
   
   let jsonStr=content.trim();
   const m=jsonStr.match(/```(?:json)?\s*([\s\S]+?)\s*```/);
@@ -1519,7 +1876,7 @@ ${recentJournals.map(j=>`${j.date}: ${j.wish}`).join("\n")||"无"}
   const content=await callAI([
     {role:"system",content:"你是用户的私人成长教练。洞察敏锐、语言精准、温暖不油腻。严格 JSON 输出。"},
     {role:"user",content:prompt}
-  ],{temperature:0.7,max_tokens:1800});
+  ],{temperature:0.7,max_tokens:4000,jsonMode:true,reasoningEffort:userReasoningEffort()});
   
   let jsonStr=content.trim();
   const m=jsonStr.match(/```(?:json)?\s*([\s\S]+?)\s*```/);
@@ -1609,7 +1966,7 @@ ${body}
   const content=await callAI([
     {role:"system",content:"你是一位资深的个人时间管理顾问，擅长综合分析任务积压、当日工作量和未来计划，给出务实的排期建议。回复必须严格遵循指定 JSON 格式。"},
     {role:"user",content:prompt}
-  ],{temperature:0.5,max_tokens:2200});
+  ],{temperature:0.5,max_tokens:4000,jsonMode:true,reasoningEffort:userReasoningEffort()});
   let jsonStr=content.trim();
   const m=jsonStr.match(/```(?:json)?\s*([\s\S]+?)\s*```/);
   if(m)jsonStr=m[1];
@@ -1843,7 +2200,7 @@ function clearAllUserCache(){
     }
     keys.forEach(k=>localStorage.removeItem(k));
     // 同时清除 AI 相关数据，防止账号切换后数据泄露
-    [INBOX_KEY,PROFILE_KEY,INSIGHTS_KEY,META_KEY,"tlk_chat_v1","tlk_timer",SOUND_CONFIG_KEY,REVIEW_CONFIG_KEY,EMAIL_FORWARD_KEY].forEach(k=>{try{localStorage.removeItem(k);}catch{}});
+    [INBOX_KEY,PROFILE_KEY,INSIGHTS_KEY,META_KEY,"tlk_chat_v1","tlk_timer",SOUND_CONFIG_KEY,REVIEW_CONFIG_KEY,EMAIL_FORWARD_KEY,AI_CONFIG_KEY].forEach(k=>{try{localStorage.removeItem(k);}catch{}});
   }catch{}
 }
 function saveTimerState(taskId,startTs,accumMin){try{localStorage.setItem("tlk_timer",JSON.stringify({taskId,startTs,accumMin}));}catch{}}
@@ -2500,7 +2857,10 @@ function MainApp({user}){
   },[user.id]);
 
   const snapshot=useCallback((tList,h,date)=>{
-    const snap={date,tasks:tList.map(t=>({id:t.id,title:t.title,category:t.category,priority:t.priority,done:t.done,duration:t.duration||"",timeStart:t.timeStart||"",timeEnd:t.timeEnd||"",repeat:!!t.repeat,actualMin:Math.round(t.actualMin||0),progress:t.progress||0,projectId:t.projectId||""}))};
+    // 关键：只快照"当日相关"任务 —— due === date 或 completedAt === date
+    // 之前没有过滤，导致 history[date] 存了全部任务，污染 AI 日报、统计、活动流
+    const dayTasks=tList.filter(t=>t.due===date||t.completedAt===date);
+    const snap={date,tasks:dayTasks.map(t=>({id:t.id,title:t.title,category:t.category,priority:t.priority,done:t.done,duration:t.duration||"",timeStart:t.timeStart||"",timeEnd:t.timeEnd||"",repeat:!!t.repeat,actualMin:Math.round(t.actualMin||0),progress:t.progress||0,projectId:t.projectId||"",due:t.due||"",completedAt:t.completedAt||"",tagIds:t.tagIds||[]}))};
     const idx=h.findIndex(x=>x.date===date);
     if(idx>=0){const c=[...h];c[idx]=snap;return c;}
     return[...h,snap];
@@ -5089,7 +5449,7 @@ function MarkdownText({text,th}){
   );
 }
 
-function AssistantView({th,tasks,setTasks,projects,cats,catOf,tags,journals,today,displayName,nextSortKey,showToast,emptyTask,setTrash,user}){
+function AssistantView({th,tasks,setTasks,projects,cats,catOf,tags,journals,history,today,displayName,nextSortKey,showToast,emptyTask,setTrash,user}){
   const[messages,setMessages]=useState(()=>{
     try{
       const r=localStorage.getItem("tlk_chat_v1");
@@ -5330,7 +5690,7 @@ function AssistantView({th,tasks,setTasks,projects,cats,catOf,tags,journals,toda
     setLoading(true);
     
     try{
-      const sysPrompt=buildAssistantSystemPrompt({tasks,cats,projects,tags,journals,today,displayName});
+      const sysPrompt=buildAssistantSystemPrompt({tasks,cats,projects,tags,journals,history,today,displayName});
       // 只把 user / assistant 类消息发给 API（system_event 是 UI 显示用的，DeepSeek 不认）
       const cleanHistory=newMessages.slice(-10).filter(m=>m.role==="user"||m.role==="assistant");
       const apiMsgs=[
@@ -5342,12 +5702,29 @@ function AssistantView({th,tasks,setTasks,projects,cats,catOf,tags,journals,toda
           return{role:m.role,content:m.content||""};
         }),
       ];
+      // 流式渲染：先创建一个空气泡，边收边更新内容
+      const streamMsgId=Date.now();
+      let streamingMsgInserted=false;
       const result=await callAssistantWithTools(apiMsgs,handlers,(progress)=>{
-        if(progress.type==="tool_call"){
+        if(progress.type==="content_delta"){
+          // 收到第一个 delta 时插入气泡，后续 delta 直接更新它
+          if(!streamingMsgInserted){
+            streamingMsgInserted=true;
+            setMessages(m=>[...m,{role:"assistant",content:progress.full,streaming:true,ts:streamMsgId}]);
+          }else{
+            setMessages(m=>m.map(x=>x.ts===streamMsgId?{...x,content:progress.full}:x));
+          }
+        }else if(progress.type==="tool_call"){
           setMessages(m=>[...m,{role:"system_event",content:`🔧 调用工具：${progress.name}`,ts:Date.now()}]);
         }
       });
-      setMessages(m=>[...m,{role:"assistant",content:result.content,ts:Date.now()}]);
+      // 流式结束：把流式标记移除，并补全最终内容（防止 tool 调用后再生成的内容被漏掉）
+      if(streamingMsgInserted){
+        setMessages(m=>m.map(x=>x.ts===streamMsgId?{role:"assistant",content:result.content,ts:streamMsgId}:x));
+      }else{
+        // 没有流式 content（纯 tool_call 结束）→ 补一条最终回复
+        setMessages(m=>[...m,{role:"assistant",content:result.content,ts:Date.now()}]);
+      }
     }catch(err){
       setMessages(m=>[...m,{role:"assistant",content:`❌ ${err.message}`,error:true,ts:Date.now()}]);
     }
@@ -5378,7 +5755,10 @@ function AssistantView({th,tasks,setTasks,projects,cats,catOf,tags,journals,toda
         </div>
         <div style={{flex:1}}>
           <div className="display" style={{fontSize:22,color:th.ink0,letterSpacing:"-0.02em",fontWeight:700}}>AI 助手</div>
-          <div style={{fontSize:11,color:th.ink2,marginTop:1}}>{messages.length>0?`${messages.length} 条对话`:"问我任何关于任务、计划、效率的问题"}</div>
+          <div style={{display:"flex",alignItems:"center",gap:6,marginTop:1}}>
+            <div style={{fontSize:11,color:th.ink2}}>{messages.length>0?`${messages.length} 条对话`:"问我任何关于任务、计划、效率的问题"}</div>
+            {(()=>{const c=getAIConfig();const p=c.provider||"default";if(p==="default")return null;const def=AI_PROVIDERS[p];return(<span className="mono" style={{fontSize:9,padding:"1px 6px",borderRadius:6,background:th.glass3,color:th.accent2,letterSpacing:"0.06em",fontWeight:600}}>{c.model||def?.label||p}</span>);})()}
+          </div>
         </div>
         <button onClick={manualSync} disabled={syncing} className="glass" title="从云端拉取最新对话" style={{padding:"7px 12px",borderRadius:9,fontSize:11,color:th.ink2,display:"flex",alignItems:"center",gap:4,opacity:syncing?0.5:1}}>
           {syncing?<span className="spin">○</span>:<Ic n="repeat" size={11} color={th.ink2}/>} 同步
@@ -8693,6 +9073,187 @@ function Bullet({th,children}){
   );
 }
 
+// ═══ AI 模型配置 ═══
+function AIModelSettings({th,showToast}){
+  const[cfg,setCfg]=useState(()=>getAIConfig());
+  const[showKey,setShowKey]=useState(false);
+  const[testing,setTesting]=useState(false);
+  
+  const update=(patch)=>{
+    const next={...cfg,...patch};
+    setCfg(next);
+    setAIConfigStored(next);
+  };
+  
+  const switchProvider=(p)=>{
+    const def=AI_PROVIDERS[p];
+    update({
+      provider:p,
+      model:def.defaultModel||"",
+      // 切换 Provider 不清空已保存的 apiKey/endpoint，方便切回
+    });
+  };
+  
+  const testConnection=async()=>{
+    setTesting(true);
+    try{
+      const text=await callAI([
+        {role:"system",content:"You reply in exactly 5 chinese characters."},
+        {role:"user",content:"测试一下"},
+      ],{temperature:0.3,max_tokens:30});
+      showToast(`✓ 连接成功 · 回复：${text.slice(0,40)}`,"success");
+    }catch(e){
+      showToast("✗ "+(e.message||"连接失败"),"error");
+    }
+    setTesting(false);
+  };
+  
+  const provider=cfg.provider||"default";
+  const def=AI_PROVIDERS[provider];
+  
+  return(
+    <div style={{maxWidth:600}}>
+      <h3 className="display" style={{fontSize:18,color:th.ink0,marginBottom:6}}>AI 模型</h3>
+      <p style={{fontSize:12,color:th.ink2,marginBottom:18,lineHeight:1.6}}>
+        默认使用 DeepSeek（无需配置）。如需更强能力或更大上下文，可切换为 OpenAI / Claude / Gemini，使用您自己的 API Key。
+      </p>
+      
+      {/* Provider 选择 */}
+      <div style={{marginBottom:18}}>
+        <div className="mono" style={{fontSize:10,letterSpacing:"0.18em",color:th.ink3,marginBottom:8,fontWeight:600}}>PROVIDER</div>
+        <div style={{display:"flex",flexDirection:"column",gap:6}}>
+          {Object.entries(AI_PROVIDERS).map(([k,p])=>(
+            <button key={k} onClick={()=>switchProvider(k)}
+              style={{
+                padding:"11px 14px",borderRadius:10,textAlign:"left",
+                background:provider===k?th.glass3:th.glass1,
+                border:`1.5px solid ${provider===k?th.accent:th.glassBorder}`,
+                display:"flex",alignItems:"center",gap:10,cursor:"pointer",
+              }}>
+              <div style={{width:14,height:14,borderRadius:"50%",border:`2px solid ${provider===k?th.accent:th.ink3}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                {provider===k&&<div style={{width:6,height:6,borderRadius:"50%",background:th.accent}}/>}
+              </div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13,color:th.ink0,fontWeight:600}}>{p.label}</div>
+                {k!=="default"&&!p.supportsTools&&<div className="mono" style={{fontSize:10,color:"#f5a524",marginTop:2}}>⚠ AI 助手将以纯对话模式工作（不支持工具调用）</div>}
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+      
+      {/* 默认 Provider：DeepSeek V4 能力全开 */}
+      {provider==="default"&&(
+        <>
+          <div style={{padding:14,borderRadius:10,background:th.glass2,border:`1px solid ${th.glassBorder}`,fontSize:12,color:th.ink2,lineHeight:1.7,marginBottom:14}}>
+            <div style={{color:th.ink0,fontWeight:600,marginBottom:8}}>✓ 默认 DeepSeek，无需配置</div>
+            <div>已启用以下 V4 能力：</div>
+            <div style={{marginTop:6,fontSize:11,color:th.ink3,lineHeight:1.8}}>
+              • <span style={{color:"#10d9a3"}}>JSON Mode</span> — 日报/画像/解析等结构化输出 100% 可靠<br/>
+              • <span style={{color:"#10d9a3"}}>流式输出</span> — AI 助手回答边生成边显示<br/>
+              • <span style={{color:"#10d9a3"}}>思考模式</span> — 日报/周报/画像启用深度推理<br/>
+              • <span style={{color:"#10d9a3"}}>1M 上下文</span> — 完整任务历史喂给 AI<br/>
+              • <span style={{color:"#10d9a3"}}>自动重试</span> — 网络抖动时自动恢复
+            </div>
+          </div>
+          
+          {/* 推理强度开关 */}
+          <div style={{marginBottom:14}}>
+            <div className="mono" style={{fontSize:10,letterSpacing:"0.18em",color:th.ink3,marginBottom:8,fontWeight:600}}>推理强度（仅日报/周报/画像）</div>
+            <div style={{display:"flex",gap:6}}>
+              {[["medium","标准","平衡速度与质量"],["high","深度","推理更细致 ⏱"],["max","极限","最强但最慢 ⏱⏱"]].map(([v,label,desc])=>{
+                const cur=cfg.reasoningEffort||"medium";
+                return(
+                  <button key={v} onClick={()=>update({reasoningEffort:v})}
+                    style={{flex:1,padding:"10px 8px",borderRadius:9,textAlign:"center",
+                      background:cur===v?th.accent+"22":th.glass1,
+                      border:`1.5px solid ${cur===v?th.accent:th.glassBorder}`,
+                      cursor:"pointer"}}>
+                    <div style={{fontSize:12,color:cur===v?th.accent2:th.ink0,fontWeight:600}}>{label}</div>
+                    <div className="mono" style={{fontSize:9,color:th.ink3,marginTop:3,letterSpacing:"0.04em"}}>{desc}</div>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="mono" style={{fontSize:10,color:th.ink3,marginTop:8,letterSpacing:"0.04em"}}>
+              建议：日常用「标准」，需要专业分析（如月度复盘）切到「深度」或「极限」
+            </div>
+          </div>
+        </>
+      )}
+      
+      {/* 自定义 Provider：API Key 输入 */}
+      {provider!=="default"&&(
+        <>
+          <div style={{marginBottom:14}}>
+            <div className="mono" style={{fontSize:10,letterSpacing:"0.18em",color:th.ink3,marginBottom:6,fontWeight:600}}>API KEY</div>
+            <div style={{display:"flex",gap:6}}>
+              <input
+                type={showKey?"text":"password"}
+                value={cfg.apiKey||""}
+                onChange={e=>update({apiKey:e.target.value})}
+                placeholder={provider==="openai"?"sk-...":provider==="anthropic"?"sk-ant-...":provider==="gemini"?"AIza...":"sk-..."}
+                className="inp" style={{flex:1,fontFamily:"var(--f-mono)"}}
+              />
+              <button onClick={()=>setShowKey(!showKey)} style={{padding:"8px 12px",borderRadius:8,background:th.glass2,fontSize:11,color:th.ink2}}>
+                {showKey?"隐藏":"显示"}
+              </button>
+            </div>
+            <div className="mono" style={{fontSize:10,color:th.ink3,marginTop:6,letterSpacing:"0.04em"}}>
+              🔒 仅保存在本地浏览器（localStorage），不会上传云端
+            </div>
+          </div>
+          
+          {/* OpenAI 兼容自定义：endpoint 输入 */}
+          {provider==="openai_compat"&&(
+            <div style={{marginBottom:14}}>
+              <div className="mono" style={{fontSize:10,letterSpacing:"0.18em",color:th.ink3,marginBottom:6,fontWeight:600}}>API ENDPOINT (BASE URL)</div>
+              <input
+                value={cfg.endpoint||""}
+                onChange={e=>update({endpoint:e.target.value})}
+                placeholder="https://api.deepseek.com/v1 或 https://openrouter.ai/api/v1"
+                className="inp" style={{fontFamily:"var(--f-mono)",fontSize:12}}
+              />
+              <div className="mono" style={{fontSize:10,color:th.ink3,marginTop:6,letterSpacing:"0.04em"}}>
+                常用：DeepSeek <code style={{background:th.glass2,padding:"1px 5px",borderRadius:3}}>https://api.deepseek.com/v1</code> · OpenRouter <code style={{background:th.glass2,padding:"1px 5px",borderRadius:3}}>https://openrouter.ai/api/v1</code> · Groq <code style={{background:th.glass2,padding:"1px 5px",borderRadius:3}}>https://api.groq.com/openai/v1</code>
+              </div>
+            </div>
+          )}
+          
+          {/* 模型选择 */}
+          <div style={{marginBottom:14}}>
+            <div className="mono" style={{fontSize:10,letterSpacing:"0.18em",color:th.ink3,marginBottom:6,fontWeight:600}}>MODEL</div>
+            {def.models&&def.models.length>0?(
+              <select value={cfg.model||def.defaultModel||""} onChange={e=>update({model:e.target.value})} className="inp" style={{fontFamily:"var(--f-mono)"}}>
+                {def.models.map(m=><option key={m} value={m}>{m}</option>)}
+              </select>
+            ):(
+              <input value={cfg.model||""} onChange={e=>update({model:e.target.value})} placeholder="如：deepseek-chat / llama-3.3-70b-versatile" className="inp" style={{fontFamily:"var(--f-mono)",fontSize:12}}/>
+            )}
+          </div>
+          
+          {/* 测试连接 */}
+          <button onClick={testConnection} disabled={testing||!cfg.apiKey}
+            style={{padding:"10px 16px",borderRadius:10,background:th.accent,color:"#fff",fontSize:13,fontWeight:600,opacity:testing||!cfg.apiKey?0.5:1,cursor:testing||!cfg.apiKey?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:8}}>
+            <Ic n="zap" size={12} color="#fff"/>
+            {testing?"测试中...":"测试连接"}
+          </button>
+          
+          {/* 注意事项 */}
+          <div style={{marginTop:18,padding:12,borderRadius:10,background:th.glass1,border:`1px solid ${th.glassBorder}`,fontSize:11,color:th.ink2,lineHeight:1.7}}>
+            <div style={{fontWeight:600,color:th.ink1,marginBottom:6}}>⚠ 注意事项</div>
+            <div>• API Key 仅存于本地浏览器，不会同步到云端或其他设备</div>
+            <div>• 使用第三方 API 产生的费用由 Provider 直接向您收取</div>
+            <div>• 浏览器直连 API 可能受 CORS 限制，部分企业代理可能拦截</div>
+            {provider==="anthropic"&&<div>• Anthropic 已通过 dangerous-direct-browser-access 解除浏览器调用限制</div>}
+            {!def.supportsTools&&<div>• 此 Provider 不支持函数调用，AI 助手会以纯对话模式工作</div>}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function Settings({th,themeId,setThemeId,cats,setCats,projects,setProjects,tasks,history,setTasks,setHistory,trash,restoreTask,purgeTask,emptyTrash,tags,addTag,updateTag,removeTag,onClose,user,onSignOut,notifPerm,askNotif,installPWA,installState,today,showToast,catOf,requestProfileUpdate,requestWeeklyInsight,profileGenerating}){
   const[tab,setTab]=useState("appearance");
   const exportJSON=()=>{const data={tasks,history,cats,projects,tags,journals,exportedAt:todayStr()};const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=`timelinek-${todayStr()}.json`;a.click();URL.revokeObjectURL(url);showToast("已导出","success");};
@@ -8738,7 +9299,7 @@ function Settings({th,themeId,setThemeId,cats,setCats,projects,setProjects,tasks
           <button onClick={onClose} style={{width:34,height:34,borderRadius:10,background:th.glass2,display:"flex",alignItems:"center",justifyContent:"center"}}><Ic n="close" size={14} color={th.ink2}/></button>
         </div>
         <div style={{padding:"10px 16px",display:"flex",gap:4,overflowX:"auto",borderBottom:`1px solid ${th.glassBorder}`}} className="slim-scroll">
-          {[["appearance","外观","palette"],["account","账户","user"],["ai","AI 画像","zap"],["categories","分类","layers"],["tags",`标签${tags&&tags.length?` · ${tags.length}`:""}`,"hash"],["sound","声音","bell"],["review","复盘","star"],["trash",`回收站${trash&&trash.length?` · ${trash.length}`:""}`,"trash"],["data","数据","download"],["about","关于","info"]].map(([k,l,ic])=>(
+          {[["appearance","外观","palette"],["account","账户","user"],["model","AI 模型","bot"],["ai","AI 画像","zap"],["categories","分类","layers"],["tags",`标签${tags&&tags.length?` · ${tags.length}`:""}`,"hash"],["sound","声音","bell"],["review","复盘","star"],["trash",`回收站${trash&&trash.length?` · ${trash.length}`:""}`,"trash"],["data","数据","download"],["about","关于","info"]].map(([k,l,ic])=>(
             <button key={k} onClick={()=>setTab(k)} className={`view-tab ${tab===k?"active":""}`} style={{flexShrink:0}}>
               <Ic n={ic} size={11} color={tab===k?"#fff":th.ink2}/> {l}
             </button>
@@ -8863,6 +9424,7 @@ function Settings({th,themeId,setThemeId,cats,setCats,projects,setProjects,tasks
           {tab==="sound"&&<SoundSettings th={th} showToast={showToast} notifPerm={notifPerm} askNotif={askNotif}/>}
           {tab==="review"&&<ReviewSettings th={th} showToast={showToast}/>}
           {tab==="ai"&&<AiProfileSettings th={th} showToast={showToast} requestProfileUpdate={requestProfileUpdate} requestWeeklyInsight={requestWeeklyInsight} profileGenerating={profileGenerating}/>}
+          {tab==="model"&&<AIModelSettings th={th} showToast={showToast}/>}
 
           {tab==="trash"&&(
             <div>

@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover"/>
-<title>Timelinek · 超级笔记本</title>
-<meta name="description" content="Timelinek · 任务 · 时间线 · 项目 · 专注 · 云同步"/>
+<title>Timelinek</title>
+<meta name="description" content="Timelinek · 你的 AI 工作空间"/>
 <meta name="theme-color" content="#fafaff" id="theme-color-meta"/>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
@@ -166,24 +166,15 @@ kbd{font-family:var(--f-mono);font-size:10px;padding:1px 5px;border-radius:3px;b
   <style>
     @keyframes splashFadeIn{from{opacity:0}to{opacity:1}}
     @keyframes splashLetter{from{opacity:0;transform:translateY(14px) scale(0.9);filter:blur(8px)}to{opacity:1;transform:translateY(0) scale(1);filter:blur(0)}}
-    @keyframes splashShimmer{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}
-    @keyframes splashOrbA{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(40px,-30px) scale(1.15)}}
-    @keyframes splashOrbB{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(-35px,30px) scale(1.1)}}
-    @keyframes splashDot{0%,80%,100%{transform:scale(0.5);opacity:0.3}40%{transform:scale(1);opacity:1}}
-    @keyframes splashUnderline{from{transform:scaleX(0)}to{transform:scaleX(1)}}
     @keyframes splashUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
     #initial-splash{animation:splashFadeIn 0.3s ease-out}
-    #initial-splash .splash-orb{position:absolute;border-radius:50%;filter:blur(70px);pointer-events:none;z-index:1}
-    #initial-splash .splash-orb.a{top:15%;left:20%;width:380px;height:380px;background:radial-gradient(circle,rgba(109,95,255,0.32),transparent 70%);animation:splashOrbA 8s ease-in-out infinite}
-    #initial-splash .splash-orb.b{bottom:18%;right:18%;width:340px;height:340px;background:radial-gradient(circle,rgba(236,72,153,0.28),transparent 70%);animation:splashOrbB 9s ease-in-out infinite -3s}
-    #initial-splash .splash-orb.c{top:50%;left:50%;transform:translate(-50%,-50%);width:280px;height:280px;background:radial-gradient(circle,rgba(34,211,238,0.18),transparent 70%);animation:splashOrbA 10s ease-in-out infinite -1.5s}
-    #initial-splash .splash-center{display:flex;flex-direction:column;align-items:center;position:relative;z-index:2}
-    #initial-splash .splash-logo{font-size:min(88px,17vw);letter-spacing:-0.05em;line-height:1;font-weight:700;display:flex;align-items:baseline;gap:0.01em;position:relative;justify-content:center}
+    #initial-splash .splash-center{display:flex;flex-direction:column;align-items:center;position:relative;z-index:2;padding:20px}
+    /* 默认（手机竖屏 / 平板）：clamp 让字号在 56~88px 之间，跟随宽度自适应 */
+    #initial-splash .splash-logo{font-size:clamp(56px,12vw,88px);letter-spacing:-0.02em;line-height:1;font-weight:700;display:flex;align-items:baseline;gap:0.01em;position:relative;justify-content:center}
     #initial-splash .splash-logo .a{color:#1a1530;display:inline-flex;align-items:baseline}
     #initial-splash .splash-logo .splash-linek{width:2.954em;height:0.784em}
-    /* 逐字符入场动画：HTML span 和 SVG text 都适用 */
+    /* 逐字符入场动画 */
     #initial-splash .splash-logo .ch{display:inline-block;animation:splashLetter 0.7s cubic-bezier(0.22,1,0.36,1) both}
-    /* SVG <text class="ch"> 需要 transform-box 让 transform 基于自身 */
     #initial-splash .splash-logo .splash-linek .ch{transform-box:fill-box;transform-origin:center}
     #initial-splash .splash-logo .ch.c1{animation-delay:0.05s}
     #initial-splash .splash-logo .ch.c2{animation-delay:0.1s}
@@ -194,17 +185,27 @@ kbd{font-family:var(--f-mono);font-size:10px;padding:1px 5px;border-radius:3px;b
     #initial-splash .splash-logo .ch.c7{animation-delay:0.4s}
     #initial-splash .splash-logo .ch.c8{animation-delay:0.45s}
     #initial-splash .splash-logo .ch.c9{animation-delay:0.5s}
-    #initial-splash .splash-underline{height:2px;width:60%;margin:14px auto 0;background:linear-gradient(90deg,transparent,#6d5fff,#ec4899,transparent);transform-origin:center;animation:splashUnderline 0.8s 0.6s cubic-bezier(0.22,1,0.36,1) both,splashShimmer 4s ease-in-out infinite}
-    #initial-splash .splash-tagline{font-family:'JetBrains Mono','SF Mono',ui-monospace,monospace;font-size:11px;color:#7a73a3;letter-spacing:0.24em;margin-top:18px;font-weight:500;animation:splashUp 0.8s 0.7s cubic-bezier(0.22,1,0.36,1) both}
-    #initial-splash .splash-dots{display:flex;gap:7px;margin-top:32px;animation:splashUp 0.8s 0.85s cubic-bezier(0.22,1,0.36,1) both}
-    #initial-splash .splash-dots span{width:6px;height:6px;border-radius:50%;animation:splashDot 1.4s ease-in-out infinite}
-    #initial-splash .splash-dots span:nth-child(1){background:#6d5fff;box-shadow:0 0 10px rgba(109,95,255,0.4)}
-    #initial-splash .splash-dots span:nth-child(2){background:#ec4899;box-shadow:0 0 10px rgba(236,72,153,0.4);animation-delay:0.2s}
-    #initial-splash .splash-dots span:nth-child(3){background:#22d3ee;box-shadow:0 0 10px rgba(34,211,238,0.4);animation-delay:0.4s}
+    #initial-splash .splash-tagline{font-family:'JetBrains Mono','SF Mono',ui-monospace,monospace;font-size:clamp(11px,1.4vw,15px);color:#6d6692;letter-spacing:0.18em;margin-top:clamp(16px,2vh,24px);font-weight:500;animation:splashUp 0.8s 0.6s cubic-bezier(0.22,1,0.36,1) both}
+    /* 桌面横屏（≥768px 且竖高足够）：放大 logo，匹配 PNG splash 视觉比例 */
+    @media (min-width:768px) and (min-height:600px){
+      #initial-splash .splash-logo{font-size:clamp(88px,8vw,128px)}
+      #initial-splash .splash-tagline{font-size:clamp(13px,1vw,16px);margin-top:24px;letter-spacing:0.22em}
+    }
+    /* 大屏桌面（≥1440px）：进一步放大 */
+    @media (min-width:1440px){
+      #initial-splash .splash-logo{font-size:clamp(120px,7.5vw,160px)}
+      #initial-splash .splash-tagline{font-size:16px;margin-top:28px}
+    }
+    /* 矮横屏（笔记本横屏 / 折叠屏横屏）：限高优先，避免溢出 */
+    @media (orientation:landscape) and (max-height:500px){
+      #initial-splash .splash-logo{font-size:min(56px,12vh)}
+      #initial-splash .splash-tagline{margin-top:12px;font-size:10px}
+    }
+    /* 超窄屏 */
+    @media (max-width:380px){
+      #initial-splash .splash-logo{font-size:14vw}
+    }
   </style>
-  <div class="splash-orb a"></div>
-  <div class="splash-orb b"></div>
-  <div class="splash-orb c"></div>
   <div class="splash-center">
     <div class="splash-logo">
       <span class="a">
@@ -214,39 +215,54 @@ kbd{font-family:var(--f-mono);font-size:10px;padding:1px 5px;border-radius:3px;b
         <defs>
           <linearGradient id="splashGrad" x1="0%" y1="0%" x2="100%" y2="0%">
             <stop offset="0%" stop-color="#6d5fff"/>
-            <stop offset="50%" stop-color="#ec4899"/>
-            <stop offset="100%" stop-color="#22d3ee"/>
+            <stop offset="100%" stop-color="#6d5fff"/>
           </linearGradient>
         </defs>
-        <!-- 逐字符渲染：每个 text 独立动画，复刻原来 c5-c9 的入场感 -->
-        <text class="ch c5" x="0"   y="69" font-family="'Instrument Serif','Noto Serif SC',Georgia,serif" font-size="88" font-style="italic" font-weight="400" letter-spacing="-0.05em" fill="url(#splashGrad)">l</text>
-        <text class="ch c6" x="32"  y="69" font-family="'Instrument Serif','Noto Serif SC',Georgia,serif" font-size="88" font-style="italic" font-weight="400" letter-spacing="-0.05em" fill="url(#splashGrad)">i</text>
-        <text class="ch c7" x="64"  y="69" font-family="'Instrument Serif','Noto Serif SC',Georgia,serif" font-size="88" font-style="italic" font-weight="400" letter-spacing="-0.05em" fill="url(#splashGrad)">n</text>
-        <text class="ch c8" x="128" y="69" font-family="'Instrument Serif','Noto Serif SC',Georgia,serif" font-size="88" font-style="italic" font-weight="400" letter-spacing="-0.05em" fill="url(#splashGrad)">e</text>
-        <text class="ch c9" x="180" y="69" font-family="'Instrument Serif','Noto Serif SC',Georgia,serif" font-size="88" font-style="italic" font-weight="400" letter-spacing="-0.05em" fill="url(#splashGrad)">k</text>
+        <text class="ch c5" x="0"   y="69" font-family="'Instrument Serif','Noto Serif SC',Georgia,serif" font-size="88" font-style="italic" font-weight="400" letter-spacing="-0.05em" fill="#6d5fff">l</text>
+        <text class="ch c6" x="32"  y="69" font-family="'Instrument Serif','Noto Serif SC',Georgia,serif" font-size="88" font-style="italic" font-weight="400" letter-spacing="-0.05em" fill="#6d5fff">i</text>
+        <text class="ch c7" x="64"  y="69" font-family="'Instrument Serif','Noto Serif SC',Georgia,serif" font-size="88" font-style="italic" font-weight="400" letter-spacing="-0.05em" fill="#6d5fff">n</text>
+        <text class="ch c8" x="128" y="69" font-family="'Instrument Serif','Noto Serif SC',Georgia,serif" font-size="88" font-style="italic" font-weight="400" letter-spacing="-0.05em" fill="#6d5fff">e</text>
+        <text class="ch c9" x="180" y="69" font-family="'Instrument Serif','Noto Serif SC',Georgia,serif" font-size="88" font-style="italic" font-weight="400" letter-spacing="-0.05em" fill="#6d5fff">k</text>
       </svg>
     </div>
-    <div class="splash-underline"></div>
     <div class="splash-tagline">YOUR PERSONAL AI WORKSPACE</div>
-    <div class="splash-dots"><span></span><span></span><span></span></div>
   </div>
 </div></div>
 <div id="errbox" style="display:none;position:fixed;inset:20px;z-index:99999;background:#fff5f5;border:2px solid #ff5a5f;border-radius:12px;padding:20px;overflow:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;color:#0a0a0a;line-height:1.65"></div>
 <script>
 // ═══ PWA 初始化：动态生成 manifest + PNG icons ═══
 (function initPWA(){
-  // App icon（home screen 上的图标）—— 渐变方块 + 优雅 T，保持品牌识别
+  // App icon（home screen 上的图标）—— 白底 + 多彩渐变斜体 T（跟 PNG 文件视觉完全一致）
   function makeAppIcon(size,maskable){
     const c=document.createElement('canvas');c.width=c.height=size;
     const x=c.getContext('2d');
     const r=maskable?size*0.25:size*0.22;
-    const g=x.createLinearGradient(0,0,size,size);
-    g.addColorStop(0,'#6d5fff');g.addColorStop(1,'#ec4899');
-    x.fillStyle=g;
     const rr=(X,Y,W,H,R)=>{x.beginPath();x.moveTo(X+R,Y);x.arcTo(X+W,Y,X+W,Y+H,R);x.arcTo(X+W,Y+H,X,Y+H,R);x.arcTo(X,Y+H,X,Y,R);x.arcTo(X,Y,X+W,Y,R);x.closePath();};
-    rr(0,0,size,size,maskable?0:r);x.fill();
-    x.fillStyle='white';x.font='italic '+(size*0.55)+'px serif';x.textAlign='center';x.textBaseline='middle';
-    x.fillText('T',size/2,size*0.53);
+    // 白色背景
+    if(maskable){
+      x.fillStyle='#ffffff';x.fillRect(0,0,size,size);
+    }else{
+      x.fillStyle='#ffffff';rr(0,0,size,size,r);x.fill();
+    }
+    // 字号：maskable 56% / 普通 74%（与 PNG 生成保持一致）
+    const fontRatio=maskable?0.56:0.74;
+    const fontPx=size*fontRatio;
+    x.font='italic 400 '+fontPx+'px "Instrument Serif","Lora","Noto Serif SC",Georgia,serif';
+    x.textAlign='center';x.textBaseline='middle';
+    // 测量 T 字符的实际像素 bbox（关键：让渐变只在 T 字符范围内分布）
+    const m=x.measureText('T');
+    const tw=m.width;
+    const ascent=m.actualBoundingBoxAscent||fontPx*0.72;
+    const descent=m.actualBoundingBoxDescent||fontPx*0.05;
+    const cx=size/2,cy=size*0.54;
+    const x0=cx-tw/2,y0=cy-ascent,x1=cx+tw/2,y1=cy+descent;
+    // 对角线渐变（左上紫 → 中间粉 → 右下青），起止严格按 T 字符 bbox
+    const g=x.createLinearGradient(x0,y0,x1,y1);
+    g.addColorStop(0,'#6d5fff');
+    g.addColorStop(0.5,'#ec4899');
+    g.addColorStop(1,'#22d3ee');
+    x.fillStyle=g;
+    x.fillText('T',cx,cy);
     return c.toDataURL('image/png');
   }
   // Splash icon（启动时的中心图标）—— 白底 + 文字 logo，符合用户对启动屏的期望
@@ -274,8 +290,8 @@ kbd{font-family:var(--f-mono);font-size:10px;padding:1px 5px;border-radius:3px;b
     }).catch(()=>{
       // fallback：动态生成。background_color 改为浅色 - 启动屏会用这个色
       const manifest={
-        name:"Timelinek · 超级笔记本",short_name:"Timelinek",
-        description:"任务 · 时间线 · 项目 · 专注 · 云同步",
+        name:"Timelinek",short_name:"Timelinek",
+        description:"你的 AI 工作空间",
         start_url:"./",scope:"./",display:"standalone",display_override:["window-controls-overlay","standalone"],
         orientation:"any",
         background_color:"#fafaff",theme_color:"#fafaff",
@@ -1242,7 +1258,7 @@ async function callAssistantWithTools(messages,handlers,onProgress){
   const validRoles=new Set(["system","user","assistant","tool"]);
   const conversation=messages.filter(m=>m&&validRoles.has(m.role));
   let rounds=0;
-  while(rounds<5){ // 最多 5 轮 tool 调用，防死循环
+  while(rounds<12){ // 最多 12 轮 tool 调用（V4 1M 上下文足够，复杂任务需多轮）
     rounds++;
     const cfg=getAIConfig();
     const provider=cfg.provider||"default";
@@ -1319,6 +1335,7 @@ async function callAssistantWithTools(messages,handlers,onProgress){
     
     // ─── 流式 SSE 解析：累积 content 和 tool_calls ───
     const msg={role:"assistant",content:"",tool_calls:[]};
+    const currentRound=rounds; // 当前轮次（1-based）
     const reader=resp.body.getReader();
     const decoder=new TextDecoder();
     let buffer="";
@@ -1341,7 +1358,7 @@ async function callAssistantWithTools(messages,handlers,onProgress){
           // 累积文本
           if(delta.content){
             msg.content+=delta.content;
-            onProgress&&onProgress({type:"content_delta",text:delta.content,full:msg.content});
+            onProgress&&onProgress({type:"content_delta",text:delta.content,full:msg.content,round:currentRound});
           }
           // 累积 tool_calls（每个 delta 可能含部分 arguments JSON 字符串）
           if(delta.tool_calls){
@@ -1368,7 +1385,7 @@ async function callAssistantWithTools(messages,handlers,onProgress){
     for(const tc of msg.tool_calls){
       let args={};
       try{args=JSON.parse(tc.function?.arguments||"{}");}catch{}
-      onProgress&&onProgress({type:"tool_call",name:tc.function?.name,args});
+      onProgress&&onProgress({type:"tool_call",name:tc.function?.name,args,round:currentRound});
       let toolResult;
       try{toolResult=executeAssistantTool(tc.function?.name,args,handlers);}
       catch(e){toolResult={error:e.message||"工具执行异常"};}
@@ -1377,10 +1394,12 @@ async function callAssistantWithTools(messages,handlers,onProgress){
         tool_call_id:tc.id,
         content:JSON.stringify(toolResult||{}).slice(0,2000),
       });
-      onProgress&&onProgress({type:"tool_result",name:tc.function?.name,result:toolResult});
+      onProgress&&onProgress({type:"tool_result",name:tc.function?.name,result:toolResult,round:currentRound});
     }
+    // 一轮结束（有 tool_call）：标记本轮为"中间思考"
+    onProgress&&onProgress({type:"round_complete",round:currentRound,isThinking:true});
   }
-  return{content:"已达最大调用轮次",conversation};
+  return{content:"已达最大调用轮次（12 轮）",conversation,maxRoundsReached:true};
 }
 
 // 文件解析为文本
@@ -2272,6 +2291,7 @@ const IC_PATHS={
   flame:<path d="M12 2s6 6 6 12a6 6 0 01-12 0c0-2 1-4 2-5 0 2 1 3 2 3 0-3 1-6 2-10z"/>,
   star:<polygon points="12 2 15.1 8.3 22 9.3 17 14.1 18.2 21 12 17.8 5.8 21 7 14.1 2 9.3 8.9 8.3 12 2"/>,
   user:<><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></>,
+  lock:<><rect x="4" y="11" width="16" height="11" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></>,
   settings:<><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06A2 2 0 014.27 16.76l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></>,
   palette:<><circle cx="12" cy="12" r="10"/><circle cx="8" cy="14" r="1.5" fill="currentColor" stroke="none"/><circle cx="12" cy="8" r="1.5" fill="currentColor" stroke="none"/><circle cx="16" cy="14" r="1.5" fill="currentColor" stroke="none"/></>,
   edit:<><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></>,
@@ -2448,7 +2468,7 @@ function AuthScreen(){
             <span style={{color:"#1a1530"}}>Time</span>
             <em style={{fontStyle:"italic",fontWeight:400,background:"linear-gradient(135deg,#6d5fff 0%,#ec4899 50%,#22d3ee 100%)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",backgroundClip:"text",paddingRight:"0.06em",animation:"shimmerGrad 6s ease-in-out infinite",backgroundSize:"200% auto"}}>linek</em>
           </h1>
-          <p style={{fontSize:14,color:"#6b6390",letterSpacing:"0.16em",fontWeight:400}}>专注当下 <span style={{margin:"0 8px",opacity:.4}}>·</span> 规划未来</p>
+          <p style={{fontSize:14,color:"#6b6390",letterSpacing:"0.16em",fontWeight:400}}>你的 AI 工作空间</p>
         </div>
 
         {/* 表单卡片 - 浅白玻璃 */}
@@ -2465,7 +2485,7 @@ function AuthScreen(){
 
           <form onSubmit={submit}>
             <div style={{marginBottom:14,position:"relative"}}>
-              <div style={{position:"absolute",left:15,top:"50%",transform:"translateY(-50%)",pointerEvents:"none",opacity:.55,zIndex:1}}>
+              <div style={{position:"absolute",left:15,top:"50%",transform:"translateY(-50%)",pointerEvents:"none",opacity:.55,zIndex:1,display:"flex",alignItems:"center",justifyContent:"center",width:18,height:18}}>
                 <Ic n="user" size={15} color="#7a73a3"/>
               </div>
               <input value={username} onChange={e=>setUsername(e.target.value)} type="text" placeholder="账户名（至少 2 个字符）" autoComplete="username" maxLength={32} style={{...inpS,paddingLeft:42}} onFocus={e=>{e.target.style.borderColor="rgba(109,95,255,0.55)";e.target.style.boxShadow="0 0 0 4px rgba(109,95,255,0.1),0 4px 16px rgba(109,95,255,0.12)";e.target.style.background="rgba(255,255,255,0.95)";}} onBlur={e=>{e.target.style.borderColor="rgba(20,18,38,0.08)";e.target.style.boxShadow="none";e.target.style.background="rgba(255,255,255,0.7)";}}/>
@@ -2474,8 +2494,8 @@ function AuthScreen(){
               </div>
             </div>
             <div style={{marginBottom:18,position:"relative"}}>
-              <div style={{position:"absolute",left:15,top:"50%",transform:"translateY(-50%)",pointerEvents:"none",opacity:.55,zIndex:1}}>
-                <Ic n="settings" size={15} color="#7a73a3"/>
+              <div style={{position:"absolute",left:15,top:"50%",transform:"translateY(-50%)",pointerEvents:"none",opacity:.55,zIndex:1,display:"flex",alignItems:"center",justifyContent:"center",width:18,height:18}}>
+                <Ic n="lock" size={15} color="#7a73a3"/>
               </div>
               <input value={password} onChange={e=>setPassword(e.target.value)} type="password" placeholder="密码（至少 6 位）" autoComplete={mode==="login"?"current-password":"new-password"} style={{...inpS,paddingLeft:42}} onFocus={e=>{e.target.style.borderColor="rgba(109,95,255,0.55)";e.target.style.boxShadow="0 0 0 4px rgba(109,95,255,0.1),0 4px 16px rgba(109,95,255,0.12)";e.target.style.background="rgba(255,255,255,0.95)";}} onBlur={e=>{e.target.style.borderColor="rgba(20,18,38,0.08)";e.target.style.boxShadow="none";e.target.style.background="rgba(255,255,255,0.7)";}}/>
               <div style={{minHeight:18,marginTop:6,paddingLeft:4}}>
@@ -3704,9 +3724,10 @@ function SideNav({th,view,setView,projects,catOf,tasks,today,setShowSettings,set
         {/* SVG height=17 = 22px字体基线位置(22×0.78)，使 SVG 底边恰好对齐"Time"文字基线 */}
         <svg width="62" height="17" viewBox="0 0 62 17" style={{overflow:"visible",flexShrink:0,display:"block"}}>
           <defs>
-            <linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+            <linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
               <stop offset="0%" stopColor={th.accent}/>
-              <stop offset="100%" stopColor={th.accent3}/>
+              <stop offset="50%" stopColor={th.accent3}/>
+              <stop offset="100%" stopColor={th.accent2||th.accent}/>
             </linearGradient>
           </defs>
           <text x="0" y="17" fontFamily="'Instrument Serif','Noto Serif SC',Georgia,serif" fontSize="22" fontStyle="italic" fontWeight="400" letterSpacing="-0.03em" fill="url(#logoGrad)">linek</text>
@@ -4048,9 +4069,10 @@ function MobileHeader({th,displayName,greeting,dateNum,today,syncStatus,doneAll,
           {/* SVG height=20 = 26px字体基线位置(26×0.78)，对齐"Time"文字基线 */}
           <svg width="74" height="20" viewBox="0 0 74 20" style={{overflow:"visible",flexShrink:0,display:"block"}}>
             <defs>
-              <linearGradient id="logoGradM" x1="0%" y1="0%" x2="100%" y2="0%">
+              <linearGradient id="logoGradM" x1="0%" y1="0%" x2="100%" y2="100%">
                 <stop offset="0%" stopColor={th.accent}/>
-                <stop offset="100%" stopColor={th.accent3}/>
+                <stop offset="50%" stopColor={th.accent3}/>
+                <stop offset="100%" stopColor={th.accent2||th.accent}/>
               </linearGradient>
             </defs>
             <text x="0" y="20" fontFamily="'Instrument Serif','Noto Serif SC',Georgia,serif" fontSize="26" fontStyle="italic" fontWeight="400" letterSpacing="-0.03em" fill="url(#logoGradM)">linek</text>
@@ -4469,7 +4491,7 @@ function AiPlanModal({th,plan,tasks,catOf,onApply,onClose,today}){
 
 // ═══ AI ASSISTANT · 对话视图 ═══
 // ═══ AI INBOX · 收件箱视图 ═══
-function InboxView({th,today,showToast,user}){
+function InboxView({th,today,showToast,user,tasks}){
   const[messages,setMessages]=useState(()=>getInbox());
   const[selectedId,setSelectedId]=useState(null);
   const[filter,setFilter]=useState("all"); // all/unread/starred/coach/reporter/strategist/mentor
@@ -4704,7 +4726,7 @@ function InboxView({th,today,showToast,user}){
         {/* 邮件详情 - 桌面端在右侧栏 */}
         {selected&&!isMobile&&(
           <div className="glass slideUp" style={{borderRadius:16,padding:0,maxHeight:"75vh",overflow:"hidden",display:"flex",flexDirection:"column"}}>
-            <InboxMessageDetail th={th} msg={selected} sender={senderInfo(selected.from)} onClose={()=>setSelectedId(null)} onStar={()=>toggleStar(selected.id)} onArchive={()=>archiveMsg(selected.id)} onDelete={()=>deleteMsg(selected.id)} onExportMd={()=>exportMd(selected)} onCopy={()=>copyContent(selected)} mailtoLink={mailtoLink(selected)}/>
+            <InboxMessageDetail th={th} msg={selected} sender={senderInfo(selected.from)} onClose={()=>setSelectedId(null)} onStar={()=>toggleStar(selected.id)} onArchive={()=>archiveMsg(selected.id)} onDelete={()=>deleteMsg(selected.id)} onExportMd={()=>exportMd(selected)} onCopy={()=>copyContent(selected)} mailtoLink={mailtoLink(selected)} tasks={tasks}/>
           </div>
         )}
       </div>
@@ -4721,7 +4743,7 @@ function InboxView({th,today,showToast,user}){
           </div>
           {/* 详情内容 */}
           <div style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column"}} className="slim-scroll">
-            <InboxMessageDetail th={th} msg={selected} sender={senderInfo(selected.from)} onClose={()=>setSelectedId(null)} onStar={()=>toggleStar(selected.id)} onArchive={()=>archiveMsg(selected.id)} onDelete={()=>deleteMsg(selected.id)} onExportMd={()=>exportMd(selected)} onCopy={()=>copyContent(selected)} mailtoLink={mailtoLink(selected)} fullscreen/>
+            <InboxMessageDetail th={th} msg={selected} sender={senderInfo(selected.from)} onClose={()=>setSelectedId(null)} onStar={()=>toggleStar(selected.id)} onArchive={()=>archiveMsg(selected.id)} onDelete={()=>deleteMsg(selected.id)} onExportMd={()=>exportMd(selected)} onCopy={()=>copyContent(selected)} mailtoLink={mailtoLink(selected)} tasks={tasks} fullscreen/>
           </div>
         </div>
       )}
@@ -4730,7 +4752,7 @@ function InboxView({th,today,showToast,user}){
 }
 
 // 邮件详情组件
-function InboxMessageDetail({th,msg,sender,onClose,onStar,onArchive,onDelete,onExportMd,onCopy,mailtoLink}){
+function InboxMessageDetail({th,msg,sender,onClose,onStar,onArchive,onDelete,onExportMd,onCopy,mailtoLink,tasks}){
   const dt=new Date(msg.createdAt);
   const fullDate=dt.toLocaleString("zh-CN",{year:"numeric",month:"long",day:"numeric",weekday:"long",hour:"2-digit",minute:"2-digit"});
   return(
@@ -4959,15 +4981,19 @@ function InboxMessageContent({th,msg,sender}){
         {Array.isArray(c.plan)&&c.plan.length>0&&(
           <div>
             <SectionHead th={th} icon="📅">排期方案</SectionHead>
-            {c.plan.map((p,i)=>(
-              <div key={i} style={{padding:"9px 14px",background:th.glass1,borderRadius:9,fontSize:12.5,color:th.ink1,lineHeight:1.6,marginBottom:5,display:"flex",gap:10,alignItems:"flex-start"}}>
-                <span className="mono tnum" style={{color:sender.color,fontWeight:700,minWidth:42}}>{p.time||"--:--"}</span>
-                <div style={{flex:1}}>
-                  <div style={{fontWeight:500}}>任务 #{p.id}</div>
-                  {p.reason&&<div style={{fontSize:11,color:th.ink3,marginTop:2}}>{p.reason}</div>}
+            {c.plan.map((p,i)=>{
+              const task=Array.isArray(tasks)?tasks.find(t=>t.id===p.id):null;
+              const title=task?task.title:`任务 #${p.id}`;
+              return(
+                <div key={i} style={{padding:"9px 14px",background:th.glass1,borderRadius:9,fontSize:12.5,color:th.ink1,lineHeight:1.6,marginBottom:5,display:"flex",gap:10,alignItems:"flex-start"}}>
+                  <span className="mono tnum" style={{color:sender.color,fontWeight:700,minWidth:42}}>{p.time||"--:--"}</span>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontWeight:500,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{title}</div>
+                    {p.reason&&<div style={{fontSize:11,color:th.ink3,marginTop:2}}>{p.reason}</div>}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -5494,6 +5520,90 @@ function MarkdownText({text,th}){
   );
 }
 
+// 思考过程折叠块（类似 Claude 的 thinking UI）
+function ThinkingBlock({th,content,toolCalls,round}){
+  const[expanded,setExpanded]=useState(false);
+  const hasToolCalls=Array.isArray(toolCalls)&&toolCalls.length>0;
+  const hasContent=content&&String(content).trim().length>0;
+  // 摘要文本：用 content 前 60 字 + 工具调用数量
+  const preview=hasContent?String(content).trim().slice(0,40)+(String(content).length>40?"…":""):"";
+  const summaryParts=[];
+  if(preview)summaryParts.push(preview);
+  if(hasToolCalls)summaryParts.push(`调用 ${toolCalls.length} 个工具`);
+  const summary=summaryParts.join(" · ")||"思考中";
+  
+  return(
+    <div style={{
+      borderRadius:11,
+      border:`1px dashed ${th.glassBorder}`,
+      background:th.glass1+"66",
+      overflow:"hidden",
+      fontSize:12,
+    }}>
+      <button onClick={()=>setExpanded(!expanded)} style={{
+        width:"100%",
+        padding:"8px 12px",
+        background:"transparent",
+        display:"flex",
+        alignItems:"center",
+        gap:8,
+        cursor:"pointer",
+        textAlign:"left",
+      }}>
+        <span style={{fontSize:11,color:th.ink3,letterSpacing:"0.06em"}}>💭</span>
+        <span className="mono" style={{fontSize:10,letterSpacing:"0.14em",color:th.ink3,fontWeight:600,textTransform:"uppercase"}}>思考过程 {round?`· 第 ${round} 轮`:""}</span>
+        <span style={{flex:1,fontSize:11,color:th.ink3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontStyle:"italic",opacity:0.75}}>{!expanded&&summary}</span>
+        <span style={{fontSize:10,color:th.ink3,transform:expanded?"rotate(180deg)":"none",transition:"transform 0.2s"}}>▾</span>
+      </button>
+      {expanded&&(
+        <div style={{padding:"4px 12px 12px",borderTop:`1px dashed ${th.glassBorder}`,marginTop:0}}>
+          {hasContent&&(
+            <div style={{
+              fontSize:12.5,
+              color:th.ink1,
+              lineHeight:1.65,
+              padding:"10px 0",
+              fontStyle:"italic",
+              whiteSpace:"pre-wrap",
+              wordBreak:"break-word",
+            }}>{content}</div>
+          )}
+          {hasToolCalls&&(
+            <div style={{display:"flex",flexDirection:"column",gap:4,marginTop:hasContent?6:8}}>
+              {toolCalls.map((tc,idx)=>{
+                let argsObj=tc.args;
+                if(typeof argsObj==="string"){try{argsObj=JSON.parse(argsObj);}catch{argsObj={};}}
+                if(!argsObj||typeof argsObj!=="object"||Array.isArray(argsObj))argsObj={};
+                const argsPreview=Object.entries(argsObj).slice(0,3).map(([k,v])=>{
+                  const vs=typeof v==="string"?(v.length>30?v.slice(0,30)+"…":v):JSON.stringify(v).slice(0,30);
+                  return`${k}:${vs}`;
+                }).join(" · ");
+                return(
+                  <div key={idx} style={{
+                    padding:"6px 10px",
+                    background:th.glass2,
+                    borderRadius:7,
+                    display:"flex",
+                    alignItems:"flex-start",
+                    gap:8,
+                    fontSize:11,
+                  }}>
+                    <span style={{flexShrink:0,fontSize:11}}>🔧</span>
+                    <div style={{flex:1,minWidth:0}}>
+                      <span className="mono" style={{color:th.accent2,fontWeight:600,letterSpacing:"0.02em"}}>{tc.name}</span>
+                      {argsPreview&&<span className="mono" style={{color:th.ink3,marginLeft:8,fontSize:10}}>{argsPreview}</span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AssistantView({th,tasks,setTasks,projects,cats,catOf,tags,journals,history,today,displayName,nextSortKey,showToast,emptyTask,setTrash,user}){
   const[messages,setMessages]=useState(()=>{
     try{
@@ -5813,28 +5923,48 @@ function AssistantView({th,tasks,setTasks,projects,cats,catOf,tags,journals,hist
           return{role:m.role,content:m.content||""};
         }),
       ];
-      // 流式渲染：先创建一个空气泡，边收边更新内容
-      const streamMsgId=Date.now();
-      let streamingMsgInserted=false;
+      // 流式渲染策略：每轮 LLM 输出独立气泡 + thinking 标记
+      // - 中间轮次（有 tool_call）的内容标记为 isThinking=true，UI 上折叠展示
+      // - 最后一轮（无 tool_call）的内容为最终回复，正常展开
+      const baseTs=Date.now();
+      // 每轮的气泡 id 用 baseTs+round 区分
+      const insertedRounds=new Set(); // 已经插入气泡的 round
       const result=await callAssistantWithTools(apiMsgs,handlers,(progress)=>{
+        const round=progress.round||1;
+        const roundTs=baseTs+round;
         if(progress.type==="content_delta"){
-          // 收到第一个 delta 时插入气泡，后续 delta 直接更新它
-          if(!streamingMsgInserted){
-            streamingMsgInserted=true;
-            setMessages(m=>[...m,{role:"assistant",content:progress.full,streaming:true,ts:streamMsgId}]);
+          if(!insertedRounds.has(round)){
+            insertedRounds.add(round);
+            setMessages(m=>[...m,{role:"assistant",content:progress.full,streaming:true,round,ts:roundTs}]);
           }else{
-            setMessages(m=>m.map(x=>x.ts===streamMsgId?{...x,content:progress.full}:x));
+            setMessages(m=>m.map(x=>x.ts===roundTs?{...x,content:progress.full}:x));
           }
         }else if(progress.type==="tool_call"){
-          setMessages(m=>[...m,{role:"system_event",content:`🔧 调用工具：${progress.name}`,ts:Date.now()}]);
+          // 把工具调用作为 thinking 子事件附加到当前轮的气泡上
+          setMessages(m=>{
+            const existing=m.find(x=>x.ts===roundTs);
+            if(existing){
+              return m.map(x=>x.ts===roundTs?{...x,toolCalls:[...(x.toolCalls||[]),{name:progress.name,args:progress.args,ts:Date.now()}]}:x);
+            }else{
+              // 没有 content 直接出 tool_call 的情况（V4 思考模式可能这样）
+              insertedRounds.add(round);
+              return[...m,{role:"assistant",content:"",streaming:true,round,ts:roundTs,toolCalls:[{name:progress.name,args:progress.args,ts:Date.now()}]}];
+            }
+          });
+        }else if(progress.type==="round_complete"&&progress.isThinking){
+          // 标记此轮为思考过程（中间轮）
+          setMessages(m=>m.map(x=>x.ts===(baseTs+progress.round)?{...x,isThinking:true,streaming:false}:x));
         }
       });
-      // 流式结束：把流式标记移除，并补全最终内容（防止 tool 调用后再生成的内容被漏掉）
-      if(streamingMsgInserted){
-        setMessages(m=>m.map(x=>x.ts===streamMsgId?{role:"assistant",content:result.content,ts:streamMsgId}:x));
+      // 最终轮（无 tool_call）：清掉 streaming 标记
+      if(insertedRounds.size>0){
+        // 找到最后一个非 thinking 的轮次（即最终回复轮）
+        const finalRound=Math.max(...Array.from(insertedRounds));
+        const finalTs=baseTs+finalRound;
+        setMessages(m=>m.map(x=>x.ts===finalTs?{...x,content:result.content||x.content,streaming:false,isThinking:false}:x));
       }else{
-        // 没有流式 content（纯 tool_call 结束）→ 补一条最终回复
-        setMessages(m=>[...m,{role:"assistant",content:result.content,ts:Date.now()}]);
+        // 没有任何流式内容（极端情况）→ 直接插一条
+        setMessages(m=>[...m,{role:"assistant",content:result.content||"（无回复）",ts:Date.now()}]);
       }
     }catch(err){
       setMessages(m=>[...m,{role:"assistant",content:`❌ ${err.message}`,error:true,ts:Date.now()}]);
@@ -5904,16 +6034,37 @@ function AssistantView({th,tasks,setTasks,projects,cats,catOf,tags,journals,hist
             );
           }
           if(m.role==="system_event"){
+            // 旧版残留：现在 tool_call 都附在气泡里，system_event 仅作历史兼容
             return(
               <div key={i} style={{textAlign:"center",fontSize:10.5,color:th.ink3,padding:"4px 0",letterSpacing:"0.04em"}}>{m.content}</div>
             );
           }
-          // assistant
+          // assistant 消息：根据 isThinking 决定是否折叠展示
+          const isThinking=m.isThinking&&!m.error;
+          const hasToolCalls=Array.isArray(m.toolCalls)&&m.toolCalls.length>0;
+          const hasContent=m.content&&String(m.content).trim().length>0;
+          // 中间思考轮次：如果没有 content 也没有 toolCalls，则跳过渲染（防止空气泡）
+          if(isThinking&&!hasContent&&!hasToolCalls)return null;
           return(
             <div key={i} style={{display:"flex",justifyContent:"flex-start",alignItems:"flex-start",gap:8}}>
-              <div style={{width:28,height:28,borderRadius:9,background:m.error?"#ff5d7a30":th.glass1,border:`1px solid ${m.error?"#ff5d7a60":th.glassBorder}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:14}}>{m.error?"⚠":"🤖"}</div>
-              <div className={m.error?"":"glass"} style={{maxWidth:"82%",padding:"11px 15px",background:m.error?"rgba(255,93,122,0.08)":undefined,color:m.error?"#ff5d7a":th.ink0,borderRadius:"14px 14px 14px 4px",fontSize:14,lineHeight:1.7,wordBreak:"break-word",border:m.error?"1px solid rgba(255,93,122,0.25)":undefined,fontFamily:"var(--f-sans)",letterSpacing:"0.01em"}}>
-                {m.error?<div style={{whiteSpace:"pre-wrap"}}>{m.content}</div>:<MarkdownText text={m.content} th={th}/>}
+              <div style={{width:28,height:28,borderRadius:9,background:m.error?"#ff5d7a30":(isThinking?th.glass2:th.glass1),border:`1px solid ${m.error?"#ff5d7a60":th.glassBorder}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:14,opacity:isThinking?0.7:1}}>{m.error?"⚠":(isThinking?"💭":"🤖")}</div>
+              <div style={{maxWidth:"82%",display:"flex",flexDirection:"column",gap:6}}>
+                {isThinking?(
+                  // 思考过程：折叠展示（类似 Claude 的 thinking 块）
+                  <ThinkingBlock th={th} content={m.content} toolCalls={m.toolCalls||[]} round={m.round}/>
+                ):(
+                  // 最终回复
+                  <div className={m.error?"":"glass"} style={{padding:"11px 15px",background:m.error?"rgba(255,93,122,0.08)":undefined,color:m.error?"#ff5d7a":th.ink0,borderRadius:"14px 14px 14px 4px",fontSize:14,lineHeight:1.7,wordBreak:"break-word",border:m.error?"1px solid rgba(255,93,122,0.25)":undefined,fontFamily:"var(--f-sans)",letterSpacing:"0.01em"}}>
+                    {m.error?<div style={{whiteSpace:"pre-wrap"}}>{m.content}</div>:<MarkdownText text={m.content} th={th}/>}
+                    {hasToolCalls&&!m.error&&(
+                      <div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${th.glassBorder}`,display:"flex",flexWrap:"wrap",gap:5}}>
+                        {m.toolCalls.map((tc,idx)=>(
+                          <span key={idx} className="mono" style={{fontSize:10,padding:"2px 7px",borderRadius:5,background:th.glass2,color:th.ink2,letterSpacing:"0.04em"}}>🔧 {tc.name}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           );
@@ -9638,14 +9789,23 @@ function Settings({th,themeId,setThemeId,cats,setCats,projects,setProjects,tasks
 
           {tab==="about"&&(
             <div style={{textAlign:"center",padding:"20px 0"}}>
-              <div style={{marginBottom:16,filter:"drop-shadow(0 8px 24px rgba(109,95,255,0.5))",display:"inline-block"}}>
-                <svg width="72" height="72" viewBox="0 0 72 72" fill="none"><defs><linearGradient id="abg" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stopColor="#6d5fff"/><stop offset="100%" stopColor="#ec4899"/></linearGradient></defs><rect width="72" height="72" rx="18" fill="url(#abg)"/><text x="36" y="52" textAnchor="middle" fontFamily="serif" fontStyle="italic" fontSize="44" fontWeight="700" fill="white">T</text></svg>
+              <div style={{marginBottom:16,filter:"drop-shadow(0 8px 24px rgba(109,95,255,0.25))",display:"inline-block"}}>
+                <svg width="72" height="72" viewBox="0 0 72 72" fill="none">
+                  <defs>
+                    <linearGradient id="abg" x1="0%" y1="0%" x2="100%" y2="100%">
+                      <stop offset="0%" stopColor="#6d5fff"/>
+                      <stop offset="50%" stopColor="#ec4899"/>
+                      <stop offset="100%" stopColor="#22d3ee"/>
+                    </linearGradient>
+                  </defs>
+                  <rect width="72" height="72" rx="16" fill="#ffffff" stroke="rgba(109,95,255,0.15)" strokeWidth="1"/>
+                  <text x="36" y="56" textAnchor="middle" fontFamily="'Instrument Serif','Lora','Noto Serif SC',Georgia,serif" fontStyle="italic" fontSize="56" fontWeight="400" fill="url(#abg)">T</text>
+                </svg>
               </div>
               <h3 className="display" style={{fontSize:26,color:th.ink0,marginBottom:4,letterSpacing:"-0.02em"}}>Timelinek</h3>
               <div className="mono" style={{fontSize:10,color:th.ink3,marginBottom:14,letterSpacing:"0.3em"}}>v2.0 · 2026</div>
               <div style={{fontSize:12,color:th.ink2,lineHeight:1.75,maxWidth:400,margin:"0 auto"}}>
-                任务 · 时间线 · 项目 · 专注 · 云同步<br/>
-                Glass morphism · 霓虹极光 · 三套主题<br/>
+                你的 AI 工作空间<br/>
                 <span className="mono" style={{fontSize:10,opacity:0.6}}>Powered by React + Supabase</span>
               </div>
             </div>

@@ -2486,7 +2486,11 @@ function AuthScreen(){
           <form onSubmit={submit}>
             <div style={{marginBottom:14,position:"relative"}}>
               <div style={{position:"absolute",left:16,top:"50%",transform:"translateY(-50%)",pointerEvents:"none",opacity:.55,zIndex:1,display:"flex",alignItems:"center",justifyContent:"center",width:20,height:20}}>
-                <Ic n="user" size={16} color="#7a73a3"/>
+                {/* 视觉重心 cy≈12 的 user icon — 与 lock 严格对齐 */}
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7a73a3" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{display:"block"}}>
+                  <circle cx="12" cy="9" r="3.5"/>
+                  <path d="M5.5 20 c0-3.5 3-6 6.5-6 s6.5 2.5 6.5 6"/>
+                </svg>
               </div>
               <input value={username} onChange={e=>setUsername(e.target.value)} type="text" placeholder="账户名（至少 2 个字符）" autoComplete="username" maxLength={32} style={{...inpS,paddingLeft:46}} onFocus={e=>{e.target.style.borderColor="rgba(109,95,255,0.55)";e.target.style.boxShadow="0 0 0 4px rgba(109,95,255,0.1),0 4px 16px rgba(109,95,255,0.12)";e.target.style.background="rgba(255,255,255,0.95)";}} onBlur={e=>{e.target.style.borderColor="rgba(20,18,38,0.08)";e.target.style.boxShadow="none";e.target.style.background="rgba(255,255,255,0.7)";}}/>
               <div style={{minHeight:18,marginTop:6,paddingLeft:4}}>
@@ -2495,7 +2499,11 @@ function AuthScreen(){
             </div>
             <div style={{marginBottom:18,position:"relative"}}>
               <div style={{position:"absolute",left:16,top:"50%",transform:"translateY(-50%)",pointerEvents:"none",opacity:.55,zIndex:1,display:"flex",alignItems:"center",justifyContent:"center",width:20,height:20}}>
-                <Ic n="lock" size={16} color="#7a73a3"/>
+                {/* 视觉重心 cy≈12 的 lock icon — 与 user 严格对齐 */}
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7a73a3" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{display:"block"}}>
+                  <path d="M8 10 V7 a4 4 0 0 1 8 0 v3"/>
+                  <rect x="5" y="10" width="14" height="10" rx="2"/>
+                </svg>
               </div>
               <input value={password} onChange={e=>setPassword(e.target.value)} type="password" placeholder="密码（至少 6 位）" autoComplete={mode==="login"?"current-password":"new-password"} style={{...inpS,paddingLeft:46}} onFocus={e=>{e.target.style.borderColor="rgba(109,95,255,0.55)";e.target.style.boxShadow="0 0 0 4px rgba(109,95,255,0.1),0 4px 16px rgba(109,95,255,0.12)";e.target.style.background="rgba(255,255,255,0.95)";}} onBlur={e=>{e.target.style.borderColor="rgba(20,18,38,0.08)";e.target.style.boxShadow="none";e.target.style.background="rgba(255,255,255,0.7)";}}/>
               <div style={{minHeight:18,marginTop:6,paddingLeft:4}}>

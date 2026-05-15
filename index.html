@@ -3461,7 +3461,7 @@ function MainApp({user}){
       {autoReport&&<AiReportModal th={th} report={autoReport} onClose={()=>setAutoReport(null)}/>}
       {weeklyInsight&&<WeeklyInsightModal th={th} insight={weeklyInsight} profile={getProfile()} onClose={()=>setWeeklyInsight(null)}/>}
       {showSettings&&<Settings th={th} themeId={themeId} setThemeId={setThemeId} cats={cats} setCats={setCats} projects={projects} setProjects={setProjects} tasks={tasks} history={history} setTasks={setTasks} setHistory={setHistory} trash={trash} restoreTask={restoreTask} purgeTask={purgeTask} emptyTrash={emptyTrash} tags={tags} addTag={addTag} updateTag={updateTag} removeTag={removeTag} onClose={()=>setShowSettings(false)} user={user} onSignOut={signOut} notifPerm={notifPerm} askNotif={askNotif} installPWA={installPWA} installState={installState} today={today} showToast={showToast} catOf={catOf} requestProfileUpdate={requestProfileUpdate} requestWeeklyInsight={requestWeeklyInsight} profileGenerating={profileGenerating}/>}
-      <FloatingOrb tasks={tasks} today={today} onOpenAssistant={(briefings)=>{setView("assistant");}} showToast={showToast} user={user}/>
+      <FloatingOrb tasks={tasks} setTasks={setTasks} projects={projects} cats={cats} catOf={catOf} tags={tags} journals={journals} history={history} today={today} displayName={displayName} nextSortKey={nextSortKey} emptyTask={emptyTask} setTrash={setTrash} onOpenAssistant={(briefings)=>{setView("assistant");}} showToast={showToast} user={user}/>
     </div>
   );
 }
@@ -5412,6 +5412,26 @@ function pushBriefing(b){
 // ═══════════════════════════════════════════════════════════════════
 // AI 光球伴侣
 // ═══════════════════════════════════════════════════════════════════
+// 解析项目名→ID（支持模糊匹配 + ID 直传）
+function resolveProjectIdForVoice(input,projects){
+  if(!input)return "";
+  if(!Array.isArray(projects))return input;
+  // 1. ID 完全匹配
+  const byId=projects.find(p=>String(p.id)===String(input));
+  if(byId)return byId.id;
+  // 2. 名称完全匹配
+  const byName=projects.find(p=>p.name===input);
+  if(byName)return byName.id;
+  // 3. 模糊匹配（去掉"项目/定制/计划"等修饰）
+  const clean=String(input).replace(/项目|定制|计划|方案/g,"").trim();
+  if(!clean)return "";
+  const fuzzy=projects.find(p=>{
+    const pn=p.name.replace(/项目|定制|计划|方案/g,"").trim();
+    return pn.includes(clean)||clean.includes(pn);
+  });
+  return fuzzy?fuzzy.id:"";
+}
+
 function calcSafeSlots(){
   const W=window.innerWidth,H=window.innerHeight;
   const slots=[];const padding=80;
@@ -5442,7 +5462,7 @@ function throttleMove(fn,wait){
   };
 }
 
-function FloatingOrb({tasks,today,onOpenAssistant,showToast,user}){
+function FloatingOrb({tasks,setTasks,projects,cats,catOf,tags,journals,history,today,displayName,nextSortKey,emptyTask,setTrash,onOpenAssistant,showToast,user}){
   const[cfg,setCfg]=useState(()=>getCompanionConfig());
   const[briefings,setBriefings]=useState(()=>getBriefings().filter(b=>!b.read&&!b.dismissed));
   const[expanded,setExpanded]=useState(false);
@@ -5613,32 +5633,103 @@ function FloatingOrb({tasks,today,onOpenAssistant,showToast,user}){
     }
   };
   
-  // 处理用户说的话 — 调 AI 并让光球回复
+  // 用 ref 保存最近 10 轮对话历史（用户语音→AI 回复）
+  const voiceConvoRef=useRef([]);
+  
+  // 处理用户说的话 — 用完整 AI 工具链（跟 AssistantView 同等能力）
   const processUserSpeech=async(userText)=>{
     setThinking(true);
     setState("thinking");
     setCaption("💭 思考中：「"+userText+"」");
     
     try{
-      // 简化版：直接调 callAI，给一个轻量 system prompt
-      const systemPrompt=`你是用户的 AI 工作伙伴 Linek，是一个时间管理和任务规划助手。
-用户通过语音对话和你互动。
-你的回复要求：
-1. 30-80 字，自然口语化，像朋友一样
-2. 不要用 markdown / 列表 / 代码块（语音会读出来）
-3. 如果用户在闲聊就轻松回应
-4. 如果涉及任务/项目管理建议引导用户打开 AI 助手详细处理
-5. 末尾不要问"还有什么可以帮你"这种废话`;
+      // ─── 1. 构造完整上下文 system prompt（复用 AI 助手页的逻辑）───
+      const baseSys=buildAssistantSystemPrompt({tasks,cats,projects,tags,journals,today,displayName});
+      // 追加"语音对话"特定指令
+      const voiceSuffix=`\n\n## 当前对话场景\n用户正在通过语音和你对话（光球伴侣模式）。\n\n## 语音回复规则（非常重要）\n1. **回复长度**：50-120 字，不能太长（用户要听完）\n2. **绝对不能用** Markdown、列表、代码块、表格 — 因为这些会被 TTS 读出符号\n3. **口语化自然表达**，像跟朋友聊天\n4. **如果调用了工具**（建任务/改任务等），用一句话告诉用户做了什么\n5. **不要说"我"或"作为 AI"**，要用 Linek 第一人称\n6. **末尾不问"还有什么可以帮你"** 这种废话`;
+      const sysPrompt=baseSys+voiceSuffix;
       
-      const reply=await callAI([
-        {role:"system",content:systemPrompt},
-        {role:"user",content:userText},
-      ],{max_tokens:200,temperature:0.8});
+      // ─── 2. 构造历史消息（最近 10 轮）───
+      voiceConvoRef.current.push({role:"user",content:userText});
+      if(voiceConvoRef.current.length>20)voiceConvoRef.current=voiceConvoRef.current.slice(-20);
       
-      const replyText=reply.replace(/^["']|["']$/g,"").trim()||"嗯，我听到了～";
+      const apiMsgs=[
+        {role:"system",content:sysPrompt},
+        ...voiceConvoRef.current,
+      ];
+      
+      // ─── 3. 构造工具 handlers（跟 AssistantView 完全一致）───
+      const handlers={
+        createTask:(args)=>{
+          const dueOk=args.due||today;
+          const projectMatched=resolveProjectIdForVoice(args.projectId,projects);
+          const newTask={
+            id:Date.now()+Math.floor(Math.random()*1000),
+            ...emptyTask,
+            title:args.title,
+            content:args.content||"",
+            due:dueOk,
+            timeStart:args.timeStart||"",
+            timeEnd:args.timeEnd||"",
+            duration:args.duration||"",
+            priority:args.priority||"中",
+            category:args.category||"work",
+            projectId:projectMatched,
+            sortKey:nextSortKey(),
+            createdAt:today,
+            done:false,
+          };
+          setTasks(t=>[...t,newTask]);
+          return{ok:true,task:newTask};
+        },
+        listTasks:(args)=>{
+          let list=tasks;
+          if(args.filter==="today")list=list.filter(t=>!t.done&&t.due===today);
+          else if(args.filter==="overdue")list=list.filter(t=>!t.done&&t.due&&t.due<today);
+          else if(args.filter==="done")list=list.filter(t=>t.done);
+          else if(args.filter==="all")list=list.filter(t=>!t.done);
+          else list=list.filter(t=>!t.done);
+          if(args.project){
+            const pid=resolveProjectIdForVoice(args.project,projects);
+            if(pid)list=list.filter(t=>t.projectId===pid);
+          }
+          return{tasks:list.slice(0,20).map(t=>({id:t.id,title:t.title,due:t.due,timeStart:t.timeStart,priority:t.priority,projectId:t.projectId}))};
+        },
+        updateTask:(args)=>{
+          if(!args.id)return{ok:false,error:"缺少 id"};
+          const idMatch=tasks.find(t=>String(t.id)===String(args.id))||tasks.find(t=>t.title===args.id)||tasks.find(t=>t.title.includes(args.id));
+          if(!idMatch)return{ok:false,error:"找不到任务"};
+          const updates={};
+          ["title","due","timeStart","timeEnd","priority","content","done"].forEach(k=>{if(args[k]!==undefined)updates[k]=args[k];});
+          setTasks(t=>t.map(x=>x.id===idMatch.id?{...x,...updates}:x));
+          return{ok:true,updates};
+        },
+        deleteTask:(args)=>{
+          if(!args.id)return{ok:false,error:"缺少 id"};
+          const idMatch=tasks.find(t=>String(t.id)===String(args.id))||tasks.find(t=>t.title===args.id)||tasks.find(t=>t.title.includes(args.id));
+          if(!idMatch)return{ok:false,error:"找不到任务"};
+          setTasks(t=>t.filter(x=>x.id!==idMatch.id));
+          setTrash&&setTrash(list=>[...list,{...idMatch,deletedAt:Date.now()}]);
+          return{ok:true};
+        },
+      };
+      
+      // ─── 4. 调用 AssistantWithTools（流式 + 工具）───
+      const result=await callAssistantWithTools(apiMsgs,handlers,(progress)=>{
+        if(progress.type==="tool_call"){
+          setCaption(`🔧 ${progress.name}...`);
+        }else if(progress.type==="content_delta"){
+          // 实时显示生成中文本
+          setCaption(progress.full||userText);
+        }
+      });
+      
+      const replyText=(result.content||"嗯，我听到了").trim();
+      voiceConvoRef.current.push({role:"assistant",content:replyText});
+      
       setThinking(false);
       
-      // 让光球说出来
+      // ─── 5. 让光球说出来 ───
       await speak(replyText);
     }catch(e){
       console.warn("[Linek 对话]",e);

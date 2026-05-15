@@ -1,24 +1,23 @@
 // /functions/api/tts.js
-// Cloudflare Pages Function — 火山引擎豆包语音合成 2.0 (新版 API Key 鉴权)
+// 火山引擎豆包 TTS 代理 — 使用 V1 endpoint + 旧版 APP ID 鉴权（最稳定）
 //
-// 新版鉴权说明：
-//   - 只用 API Key 一个凭证：Authorization: Bearer;{api_key}
-//   - Endpoint：V3 单向流式 https://openspeech.bytedance.com/api/v3/tts/unidirectional
+// 鉴权方式：
+//   Authorization: Bearer;{ACCESS_TOKEN}  (注意是分号不是空格)
+//   body 含 app.appid / app.token / app.cluster
 //
 // 客户端调用：
 //   POST /api/tts  Authorization: Bearer {supabase_jwt}
 //   body: { text, voice_type, speed_ratio, pitch_ratio }
-// 返回：MP3 二进制（直接用 <audio> 播放）
+// 返回：MP3 二进制
 
 export async function onRequestPost({ request, env }) {
-  // ─── 1. 鉴权：必须带 Supabase JWT ───
+  // ─── 1. Supabase JWT 鉴权 ───
   const auth = request.headers.get("Authorization") || "";
   if (!auth.startsWith("Bearer ")) {
     return jsonResp({ error: "未授权" }, 401);
   }
   const userToken = auth.slice(7);
 
-  // 轻量校验 Supabase token
   if (env.SUPABASE_URL && env.SUPABASE_ANON_KEY) {
     try {
       const userResp = await fetch(`${env.SUPABASE_URL}/auth/v1/user`, {
@@ -34,11 +33,14 @@ export async function onRequestPost({ request, env }) {
   }
 
   // ─── 2. 校验环境变量 ───
-  if (!env.VOLC_TTS_API_KEY) {
-    return jsonResp({ error: "服务未配置：缺少 VOLC_TTS_API_KEY" }, 500);
+  if (!env.VOLC_TTS_APP_ID) {
+    return jsonResp({ error: "缺少 VOLC_TTS_APP_ID 环境变量" }, 500);
+  }
+  if (!env.VOLC_TTS_ACCESS_TOKEN) {
+    return jsonResp({ error: "缺少 VOLC_TTS_ACCESS_TOKEN 环境变量" }, 500);
   }
 
-  // ─── 3. 解析请求 ───
+  // ─── 3. 解析客户端请求 ───
   let body;
   try {
     body = await request.json();
@@ -54,39 +56,48 @@ export async function onRequestPost({ request, env }) {
   if (!text) return jsonResp({ error: "文本为空" }, 400);
   if (text.length > 1024) return jsonResp({ error: "文本超 1024 字符" }, 400);
 
-  // ─── 4. 调火山引擎 V3 SSE 流式 ───
+  // ─── 4. 调用火山引擎 V1 endpoint ───
   const reqId = crypto.randomUUID();
+  const cluster = env.VOLC_TTS_CLUSTER || "volcano_tts";
+
   const volcPayload = {
-    user: { uid: "timelinek-" + (userToken.slice(0, 8) || "anon") },
-    req_params: {
+    app: {
+      appid: env.VOLC_TTS_APP_ID,
+      token: env.VOLC_TTS_ACCESS_TOKEN,
+      cluster: cluster,
+    },
+    user: {
+      uid: "timelinek-" + (userToken.slice(0, 8) || "anon"),
+    },
+    audio: {
+      voice_type: voiceType,
+      encoding: "mp3",
+      speed_ratio: speedRatio,
+      rate: 24000,
+    },
+    request: {
+      reqid: reqId,
       text: text,
-      speaker: voiceType,
-      audio_params: {
-        format: "mp3",
-        sample_rate: 24000,
-        speech_rate: Math.round((speedRatio - 1) * 100),
-        pitch_rate: Math.round((pitchRatio - 1) * 100),
-      },
+      operation: "query",
     },
   };
 
+  // pitch_ratio 单独加（大模型 2.0 音色支持）
+  if (pitchRatio !== 1.0) {
+    volcPayload.audio.pitch_ratio = pitchRatio;
+  }
+
   let volcResp;
   try {
-    volcResp = await fetch(
-      "https://openspeech.bytedance.com/api/v3/tts/unidirectional",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer;${env.VOLC_TTS_API_KEY}`,
-          "X-Api-Request-Id": reqId,
-          "X-Api-Resource-Id": "volc.service_type.10029",
-          "X-Api-App-Key": env.VOLC_TTS_APP_KEY || "aGjiRDfUWi",
-          "X-Api-Access-Key": env.VOLC_TTS_API_KEY,
-        },
-        body: JSON.stringify(volcPayload),
-      }
-    );
+    volcResp = await fetch("https://openspeech.bytedance.com/api/v1/tts", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        // 注意：火山引擎要求 Bearer; 后面紧接 token，没有空格
+        Authorization: `Bearer;${env.VOLC_TTS_ACCESS_TOKEN}`,
+      },
+      body: JSON.stringify(volcPayload),
+    });
   } catch (e) {
     return jsonResp({ error: "网络失败：" + e.message }, 502);
   }
@@ -94,73 +105,48 @@ export async function onRequestPost({ request, env }) {
   if (!volcResp.ok) {
     const errText = await volcResp.text().catch(() => "");
     return jsonResp(
-      { error: `火山引擎 HTTP ${volcResp.status}`, detail: errText.slice(0, 500) },
+      {
+        error: `火山引擎 HTTP ${volcResp.status}`,
+        detail: errText.slice(0, 500),
+      },
       502
     );
   }
 
-  // ─── 5. 解析 SSE 流 ───
-  const reader = volcResp.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  const audioChunks = [];
-  let errorMsg = null;
-
+  // ─── 5. 解析 V1 响应（JSON 格式，含 base64 audio） ───
+  let result;
   try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      const events = buffer.split("\n\n");
-      buffer = events.pop() || "";
-
-      for (const evt of events) {
-        const line = evt.trim();
-        if (!line.startsWith("data:")) continue;
-        const dataStr = line.slice(5).trim();
-        if (!dataStr || dataStr === "[DONE]") continue;
-        try {
-          const msg = JSON.parse(dataStr);
-          if (msg.code && msg.code !== 0 && msg.code !== 20000000) {
-            errorMsg = msg.message || `code ${msg.code}`;
-            continue;
-          }
-          if (msg.data) {
-            audioChunks.push(base64ToBytes(msg.data));
-          } else if (msg.payload && msg.payload.data) {
-            audioChunks.push(base64ToBytes(msg.payload.data));
-          }
-        } catch (e) {
-          console.warn("[TTS] SSE 解析失败:", e.message);
-        }
-      }
-    }
+    result = await volcResp.json();
   } catch (e) {
-    return jsonResp({ error: "读取流失败：" + e.message }, 502);
+    return jsonResp({ error: "解析响应失败：" + e.message }, 502);
   }
 
-  if (errorMsg) return jsonResp({ error: "TTS 失败：" + errorMsg }, 502);
-  if (audioChunks.length === 0)
-    return jsonResp({ error: "TTS 返回空音频" }, 502);
-
-  // ─── 6. 合并 chunks → MP3 ───
-  const totalLen = audioChunks.reduce((s, c) => s + c.length, 0);
-  const merged = new Uint8Array(totalLen);
-  let offset = 0;
-  for (const chunk of audioChunks) {
-    merged.set(chunk, offset);
-    offset += chunk.length;
+  // V1 success code = 3000
+  if (result.code !== 3000) {
+    return jsonResp(
+      {
+        error: `TTS 失败：${result.message || "未知"}`,
+        code: result.code,
+        full: result,
+      },
+      502
+    );
   }
 
-  return new Response(merged, {
+  if (!result.data) {
+    return jsonResp({ error: "TTS 返回无音频数据" }, 502);
+  }
+
+  // ─── 6. base64 → 二进制 MP3 ───
+  const binary = base64ToBytes(result.data);
+  return new Response(binary, {
     status: 200,
     headers: {
       "Content-Type": "audio/mpeg",
       "Cache-Control": "no-cache",
-      "X-TTS-Provider": "volcengine-v3",
+      "X-TTS-Provider": "volcengine-v1",
       "X-TTS-Voice": voiceType,
-      "X-TTS-Bytes": String(totalLen),
+      "X-TTS-Bytes": String(binary.length),
     },
   });
 }

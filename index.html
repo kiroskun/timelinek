@@ -733,24 +733,8 @@ async function speakBriefing(text,voiceKey="vivi",opts={}){
     },
   };
 
-  // 本地 TTS 抢先（防延迟）
-  let localStarted=false;
-  if(window.speechSynthesis){
-    try{
-      const u=new SpeechSynthesisUtterance(text);
-      u.lang="zh-CN";u.rate=voice.speedRatio||1;u.pitch=voice.pitchRatio||1;u.volume=volume;
-      const voices=window.speechSynthesis.getVoices();
-      const zhVoice=voices.find(v=>v.lang.startsWith("zh"));
-      if(zhVoice)u.voice=zhVoice;
-      u.onboundary=(e)=>{if(!ctrl.stopped&&!ctrl.cloudReady)onProgress({charIndex:e.charIndex,full:text});};
-      u.onend=()=>{if(!ctrl.stopped&&!ctrl.cloudReady)onEnd("local-end");};
-      window.speechSynthesis.cancel();
-      window.speechSynthesis.speak(u);
-      localStarted=true;
-    }catch(e){console.warn("[TTS] 本地失败",e);}
-  }
-
-  // 云端 TTS
+  // ─── 优先使用云端 TTS，本地仅在云端失败时兜底（避免双声音）───
+  let cloudFailed=false;
   try{
     const{data}=await supabase.auth.getSession();
     const token=data.session?.access_token;
@@ -771,7 +755,6 @@ async function speakBriefing(text,voiceKey="vivi",opts={}){
     }
     const blob=await resp.blob();
     if(ctrl.stopped)return ctrl;
-    if(localStarted)try{window.speechSynthesis.cancel();}catch{}
     const url=URL.createObjectURL(blob);
     const audio=new Audio(url);
     audio.volume=volume;
@@ -794,7 +777,23 @@ async function speakBriefing(text,voiceKey="vivi",opts={}){
     ctrl.cloudReady=true;
     audio.play().catch(e=>console.warn("[TTS] 云端播放失败",e));
   }catch(e){
-    console.warn("[TTS] 云端失败，已用本地兜底:",e.message);
+    console.warn("[TTS] 云端失败，启用本地兜底:",e.message);
+    cloudFailed=true;
+  }
+  
+  // 仅在云端失败时，启用本地 TTS 兜底（避免完全无声音）
+  if(cloudFailed&&window.speechSynthesis&&!ctrl.stopped){
+    try{
+      const u=new SpeechSynthesisUtterance(text);
+      u.lang="zh-CN";u.rate=voice.speedRatio||1;u.pitch=voice.pitchRatio||1;u.volume=volume;
+      const voices=window.speechSynthesis.getVoices();
+      const zhVoice=voices.find(v=>v.lang.startsWith("zh"));
+      if(zhVoice)u.voice=zhVoice;
+      u.onboundary=(e)=>{if(!ctrl.stopped)onProgress({charIndex:e.charIndex,full:text});};
+      u.onend=()=>{if(!ctrl.stopped)onEnd("local-fallback-end");};
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(u);
+    }catch(e){console.warn("[TTS] 本地兜底也失败",e);onEnd("all-failed");}
   }
 
   return ctrl;

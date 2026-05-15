@@ -663,6 +663,55 @@ const TTS_VOICES={
   cancan:    {name:"灿灿", desc:"温柔甜美女声", voiceType:"zh_female_cancan_mars_bigtts", speedRatio:1.0, pitchRatio:1.0},
 };
 
+// ═══ ASR 服务（浏览器内置语音识别）═══
+// 单次/持续两种模式
+function createSpeechRecognizer({onInterim,onFinal,onError,onEnd,continuous=false,lang="zh-CN"}={}){
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){
+    onError&&onError(new Error("浏览器不支持语音识别。请用 Chrome / Edge / Safari iOS 14+"));
+    return null;
+  }
+  const recog=new SR();
+  recog.lang=lang;
+  recog.continuous=continuous;
+  recog.interimResults=true; // 实时反馈
+  recog.maxAlternatives=1;
+  
+  let finalText="";
+  
+  recog.onresult=(event)=>{
+    let interim="";
+    for(let i=event.resultIndex;i<event.results.length;i++){
+      const result=event.results[i];
+      if(result.isFinal){
+        finalText+=result[0].transcript;
+      }else{
+        interim+=result[0].transcript;
+      }
+    }
+    if(interim&&onInterim)onInterim(finalText+interim);
+    if(finalText&&!interim&&onFinal)onFinal(finalText);
+  };
+  
+  recog.onerror=(e)=>{
+    console.warn("[ASR] error:",e.error);
+    if(onError)onError(new Error(e.error||"识别失败"));
+  };
+  
+  recog.onend=()=>{
+    if(finalText&&onFinal)onFinal(finalText);
+    if(onEnd)onEnd(finalText);
+  };
+  
+  return{
+    recog,
+    start(){try{recog.start();}catch(e){onError&&onError(e);}},
+    stop(){try{recog.stop();}catch{}},
+    abort(){try{recog.abort();}catch{}},
+    getFinalText(){return finalText;},
+  };
+}
+
 async function speakBriefing(text,voiceKey="vivi",opts={}){
   const cfg=getCompanionConfig();
   if(!cfg.voiceEnabled||isInNightSilent())return null;
@@ -5509,11 +5558,132 @@ function FloatingOrb({tasks,today,onOpenAssistant,showToast,user}){
       onEnd:()=>{setState("idle");setTimeout(()=>setCaption(""),3000);},
     });
   };
+  
+  // ─── 用户对光球说话：语音识别 + AI 响应 ───
+  const recognizerRef=useRef(null);
+  const[listening,setListening]=useState(false);
+  const[heardText,setHeardText]=useState("");
+  const[thinking,setThinking]=useState(false);
+  
+  const startListening=()=>{
+    if(listening||thinking)return;
+    if(speakCtrlRef.current)speakCtrlRef.current.stop(); // 用户说话时停止 AI 当前说话
+    setListening(true);
+    setHeardText("");
+    setState("listening");
+    setCaption("🎤 我在听...");
+    
+    recognizerRef.current=createSpeechRecognizer({
+      continuous:false,
+      onInterim:(text)=>{setHeardText(text);setCaption("🎤 "+text);},
+      onFinal:(text)=>{setHeardText(text);},
+      onError:(err)=>{
+        console.warn("[ASR]",err.message);
+        setListening(false);
+        setState("idle");
+        setCaption("");
+        if(err.message&&err.message.includes("not-allowed")){
+          showToast&&showToast("请允许麦克风权限","warn");
+        }else if(err.message&&err.message.includes("no-speech")){
+          showToast&&showToast("没听清，再试一次","info");
+        }
+      },
+      onEnd:(finalText)=>{
+        setListening(false);
+        if(finalText&&finalText.trim()){
+          processUserSpeech(finalText.trim());
+        }else{
+          setState("idle");
+          setCaption("");
+        }
+      },
+    });
+    if(!recognizerRef.current){
+      setListening(false);
+      setState("idle");
+      setCaption("");
+      showToast&&showToast("浏览器不支持语音识别，请用 Chrome / Edge","warn");
+      return;
+    }
+    recognizerRef.current.start();
+  };
+  
+  const stopListening=()=>{
+    if(recognizerRef.current){
+      recognizerRef.current.stop();
+    }
+  };
+  
+  // 处理用户说的话 — 调 AI 并让光球回复
+  const processUserSpeech=async(userText)=>{
+    setThinking(true);
+    setState("thinking");
+    setCaption("💭 思考中：「"+userText+"」");
+    
+    try{
+      // 简化版：直接调 callAI，给一个轻量 system prompt
+      const systemPrompt=`你是用户的 AI 工作伙伴 Linek，是一个时间管理和任务规划助手。
+用户通过语音对话和你互动。
+你的回复要求：
+1. 30-80 字，自然口语化，像朋友一样
+2. 不要用 markdown / 列表 / 代码块（语音会读出来）
+3. 如果用户在闲聊就轻松回应
+4. 如果涉及任务/项目管理建议引导用户打开 AI 助手详细处理
+5. 末尾不要问"还有什么可以帮你"这种废话`;
+      
+      const reply=await callAI([
+        {role:"system",content:systemPrompt},
+        {role:"user",content:userText},
+      ],{max_tokens:200,temperature:0.8});
+      
+      const replyText=reply.replace(/^["']|["']$/g,"").trim()||"嗯，我听到了～";
+      setThinking(false);
+      
+      // 让光球说出来
+      await speak(replyText);
+    }catch(e){
+      console.warn("[Linek 对话]",e);
+      setThinking(false);
+      setState("idle");
+      setCaption("");
+      showToast&&showToast("AI 响应失败："+e.message,"warn");
+    }
+  };
 
   useEffect(()=>{
     window.__linekSpeak=speak;
-    return()=>{delete window.__linekSpeak;};
-  },[cfg.voiceEnabled,cfg.voiceProfile,cfg.volume]);
+    window.__linekListen=startListening;
+    return()=>{delete window.__linekSpeak;delete window.__linekListen;};
+  },[cfg.voiceEnabled,cfg.voiceProfile,cfg.volume,listening,thinking]);
+  
+  // ─── 全局快捷键：按住空格说话（非输入框场景）───
+  useEffect(()=>{
+    let spacePressed=false;
+    const onKeyDown=(e)=>{
+      if(e.code!=="Space")return;
+      // 忽略输入框场景
+      const tag=document.activeElement?.tagName;
+      if(tag==="INPUT"||tag==="TEXTAREA"||document.activeElement?.isContentEditable)return;
+      if(spacePressed)return; // 防止 keydown 重复触发
+      spacePressed=true;
+      e.preventDefault();
+      startListening();
+    };
+    const onKeyUp=(e)=>{
+      if(e.code!=="Space")return;
+      const tag=document.activeElement?.tagName;
+      if(tag==="INPUT"||tag==="TEXTAREA"||document.activeElement?.isContentEditable)return;
+      if(!spacePressed)return;
+      spacePressed=false;
+      stopListening();
+    };
+    window.addEventListener("keydown",onKeyDown);
+    window.addEventListener("keyup",onKeyUp);
+    return()=>{
+      window.removeEventListener("keydown",onKeyDown);
+      window.removeEventListener("keyup",onKeyUp);
+    };
+  },[listening,thinking]);
 
   if(!cfg.enabled)return null;
 
@@ -5522,6 +5692,8 @@ function FloatingOrb({tasks,today,onOpenAssistant,showToast,user}){
     excited:["#22d3ee","#a855f7","#ec4899"],
     shy:["#9333ea","#ec4899","#fb923c"],
     speaking:["#10d9a3","#22d3ee","#6d5fff"],
+    listening:["#ef4444","#f97316","#fbbf24"], // 红橙黄：表示正在听
+    thinking:["#a855f7","#6366f1","#06b6d4"], // 紫蓝青：思考中
     celebrating:["#fbbf24","#ec4899","#22d3ee"],
   };
   const colors=stateColors[state]||stateColors.idle;
@@ -5571,7 +5743,7 @@ function OrbBriefingCard({briefings,orbPos,onClose,onOpenAssistant,onAccept,onDi
           <div style={{width:24,height:24,borderRadius:"50%",background:"conic-gradient(from 0deg,#6d5fff,#a855f7,#ec4899,#6d5fff)",boxShadow:"0 2px 8px rgba(109,95,255,0.4)"}}/>
           <div style={{flex:1}}>
             <div style={{fontSize:14,fontWeight:700,color:"#1a1530",lineHeight:1.2}}>Linek</div>
-            <div className="mono" style={{fontSize:9,color:"#7a73a3",letterSpacing:"0.16em",marginTop:2}}>{hasItems?`${briefings.length} 条新消息`:"AI READY"}</div>
+            <div className="mono" style={{fontSize:9,color:"#7a73a3",letterSpacing:"0.16em",marginTop:2}}>{hasItems?`${briefings.length} 条新消息`:"按 🎤 或长按空格说话"}</div>
           </div>
           <button onClick={onClose} style={{padding:"4px 8px",fontSize:11,color:"#7a73a3",background:"transparent",borderRadius:6,cursor:"pointer"}}>✕</button>
         </div>
@@ -5586,7 +5758,13 @@ function OrbBriefingCard({briefings,orbPos,onClose,onOpenAssistant,onAccept,onDi
             </div>
           )}
         </div>
-        <div style={{padding:"10px 14px",borderTop:"1px solid rgba(167,139,250,0.12)",display:"flex",gap:8}}>
+        <div style={{padding:"10px 14px",borderTop:"1px solid rgba(167,139,250,0.12)",display:"flex",gap:8,alignItems:"center"}}>
+          <button 
+            onMouseDown={()=>{onClose();setTimeout(()=>window.__linekListen&&window.__linekListen(),200);}} 
+            onTouchStart={()=>{onClose();setTimeout(()=>window.__linekListen&&window.__linekListen(),200);}}
+            title="按住和 Linek 说话（或按住空格键）"
+            style={{width:38,height:38,padding:0,borderRadius:"50%",background:"linear-gradient(135deg,#ef4444,#f97316)",color:"#fff",fontSize:16,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 14px rgba(239,68,68,0.35)",flexShrink:0}}
+          >🎤</button>
           <button onClick={()=>{onClose();onOpenAssistant&&onOpenAssistant(briefings);}} style={{flex:1,padding:"9px 12px",background:"linear-gradient(135deg,#6d5fff,#a855f7,#ec4899)",color:"#fff",borderRadius:9,fontSize:12,fontWeight:700,letterSpacing:"0.04em",cursor:"pointer",boxShadow:"0 4px 14px rgba(109,95,255,0.3)"}}>打开 AI 助手</button>
         </div>
       </div>

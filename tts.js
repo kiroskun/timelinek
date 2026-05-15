@@ -1,14 +1,6 @@
 // /functions/api/tts.js
-// 火山引擎豆包 TTS 代理 — 使用 V1 endpoint + 旧版 APP ID 鉴权（最稳定）
-//
-// 鉴权方式：
-//   Authorization: Bearer;{ACCESS_TOKEN}  (注意是分号不是空格)
-//   body 含 app.appid / app.token / app.cluster
-//
-// 客户端调用：
-//   POST /api/tts  Authorization: Bearer {supabase_jwt}
-//   body: { text, voice_type, speed_ratio, pitch_ratio }
-// 返回：MP3 二进制
+// 火山引擎豆包 TTS 代理 — V1 endpoint + APP ID 鉴权
+// 智能 cluster 选择：根据 voice_type 后缀自动判断
 
 export async function onRequestPost({ request, env }) {
   // ─── 1. Supabase JWT 鉴权 ───
@@ -34,10 +26,10 @@ export async function onRequestPost({ request, env }) {
 
   // ─── 2. 校验环境变量 ───
   if (!env.VOLC_TTS_APP_ID) {
-    return jsonResp({ error: "缺少 VOLC_TTS_APP_ID 环境变量" }, 500);
+    return jsonResp({ error: "缺少 VOLC_TTS_APP_ID" }, 500);
   }
   if (!env.VOLC_TTS_ACCESS_TOKEN) {
-    return jsonResp({ error: "缺少 VOLC_TTS_ACCESS_TOKEN 环境变量" }, 500);
+    return jsonResp({ error: "缺少 VOLC_TTS_ACCESS_TOKEN" }, 500);
   }
 
   // ─── 3. 解析客户端请求 ───
@@ -49,17 +41,28 @@ export async function onRequestPost({ request, env }) {
   }
 
   const text = (body.text || "").trim();
-  const voiceType = body.voice_type || "zh_female_cancan_mars_bigtts";
+  const voiceType = body.voice_type || "zh_female_vv_uranus_bigtts";
   const speedRatio = typeof body.speed_ratio === "number" ? body.speed_ratio : 1.0;
   const pitchRatio = typeof body.pitch_ratio === "number" ? body.pitch_ratio : 1.0;
 
   if (!text) return jsonResp({ error: "文本为空" }, 400);
   if (text.length > 1024) return jsonResp({ error: "文本超 1024 字符" }, 400);
 
-  // ─── 4. 调用火山引擎 V1 endpoint ───
-  const reqId = crypto.randomUUID();
-  const cluster = env.VOLC_TTS_CLUSTER || "volcano_tts";
+  // ─── 4. 智能选 cluster ───
+  // _uranus_bigtts / _tob → seed-tts 2.0
+  // _mars_bigtts → mars (普通大模型)
+  // 其他 → volcano_tts (兜底)
+  let cluster = env.VOLC_TTS_CLUSTER || "volcano_tts";
+  if (voiceType.includes("_uranus_bigtts") || voiceType.includes("_tob") || voiceType.startsWith("saturn_")) {
+    cluster = "volcano_tts"; // Seed-TTS 2.0 共享 volcano_tts cluster
+  } else if (voiceType.includes("_mars_bigtts")) {
+    cluster = "volcano_tts";
+  }
+  // 用户显式覆盖
+  if (body.cluster) cluster = body.cluster;
 
+  // ─── 5. 调用火山引擎 V1 endpoint ───
+  const reqId = crypto.randomUUID();
   const volcPayload = {
     app: {
       appid: env.VOLC_TTS_APP_ID,
@@ -82,7 +85,6 @@ export async function onRequestPost({ request, env }) {
     },
   };
 
-  // pitch_ratio 单独加（大模型 2.0 音色支持）
   if (pitchRatio !== 1.0) {
     volcPayload.audio.pitch_ratio = pitchRatio;
   }
@@ -93,7 +95,6 @@ export async function onRequestPost({ request, env }) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        // 注意：火山引擎要求 Bearer; 后面紧接 token，没有空格
         Authorization: `Bearer;${env.VOLC_TTS_ACCESS_TOKEN}`,
       },
       body: JSON.stringify(volcPayload),
@@ -108,12 +109,13 @@ export async function onRequestPost({ request, env }) {
       {
         error: `火山引擎 HTTP ${volcResp.status}`,
         detail: errText.slice(0, 500),
+        cluster_used: cluster,
+        voice_used: voiceType,
       },
       502
     );
   }
 
-  // ─── 5. 解析 V1 响应（JSON 格式，含 base64 audio） ───
   let result;
   try {
     result = await volcResp.json();
@@ -121,12 +123,13 @@ export async function onRequestPost({ request, env }) {
     return jsonResp({ error: "解析响应失败：" + e.message }, 502);
   }
 
-  // V1 success code = 3000
   if (result.code !== 3000) {
     return jsonResp(
       {
         error: `TTS 失败：${result.message || "未知"}`,
         code: result.code,
+        cluster_used: cluster,
+        voice_used: voiceType,
         full: result,
       },
       502
@@ -137,7 +140,6 @@ export async function onRequestPost({ request, env }) {
     return jsonResp({ error: "TTS 返回无音频数据" }, 502);
   }
 
-  // ─── 6. base64 → 二进制 MP3 ───
   const binary = base64ToBytes(result.data);
   return new Response(binary, {
     status: 200,
@@ -146,6 +148,7 @@ export async function onRequestPost({ request, env }) {
       "Cache-Control": "no-cache",
       "X-TTS-Provider": "volcengine-v1",
       "X-TTS-Voice": voiceType,
+      "X-TTS-Cluster": cluster,
       "X-TTS-Bytes": String(binary.length),
     },
   });

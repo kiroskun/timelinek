@@ -68,7 +68,6 @@ kbd{font-family:var(--f-mono);font-size:10px;padding:1px 5px;border-radius:3px;b
 @keyframes orbRotate{from{background-position:0% 50%}to{background-position:200% 50%}}
 @keyframes orbBreath{0%,100%{transform:scale(1) translateY(0)}50%{transform:scale(1.05) translateY(-3px)}}
 @keyframes orbPulse{0%,100%{opacity:0.3;transform:scale(0.95)}50%{opacity:0.7;transform:scale(1.15)}}
-@keyframes orbJump{0%,100%{transform:scale(1)}30%{transform:scale(0.92) translateY(2px)}60%{transform:scale(1.15) translateY(-8px)}}
 @keyframes orbWave{0%{transform:scale(1);opacity:0.6}100%{transform:scale(1.8);opacity:0}}
 @keyframes orbCardEnter{from{opacity:0;transform:scale(0.6) translateY(8px)}to{opacity:1;transform:scale(1) translateY(0)}}
 @keyframes float3d{0%,100%{transform:translateY(0) rotate(0)}50%{transform:translateY(-14px) rotate(2deg)}}
@@ -487,87 +486,6 @@ function mergeInbox(local,cloud){
 function getUnreadCount(){
   return getInbox().filter(m=>!m.read&&!m.archived).length;
 }
-
-// ═══ BRIEFINGS（主动 AI 建议系统）═══
-const BRIEFINGS_KEY="tlk_briefings_v1";
-const BRIEF_DISMISS_KEY="tlk_brief_dismiss_v1";
-
-function getBriefings(){
-  try{const r=localStorage.getItem(BRIEFINGS_KEY);return r?JSON.parse(r):[];}catch{return[];}
-}
-function setBriefingsStorage(arr){
-  try{
-    const now=Date.now();
-    const cleaned=arr.filter(b=>b.ts>now-30*86400000).slice(-50);
-    localStorage.setItem(BRIEFINGS_KEY,JSON.stringify(cleaned));
-  }catch(e){console.warn("[briefings] save failed",e);}
-}
-
-function getBriefDismissMap(){
-  try{const r=localStorage.getItem(BRIEF_DISMISS_KEY);return r?JSON.parse(r):{};}catch{return{};}
-}
-function isBriefTypeDisabled(type){
-  const m=getBriefDismissMap();
-  const rec=m[type];
-  if(!rec)return false;
-  if(rec.disabledUntil&&Date.now()<rec.disabledUntil)return true;
-  return false;
-}
-function recordBriefDismiss(type){
-  const m=getBriefDismissMap();
-  const rec=m[type]||{count:0,disabledUntil:0};
-  rec.count=(rec.count||0)+1;
-  if(rec.count>=3){
-    rec.disabledUntil=Date.now()+7*86400000;
-    rec.count=0;
-  }
-  m[type]=rec;
-  try{localStorage.setItem(BRIEF_DISMISS_KEY,JSON.stringify(m));}catch{}
-}
-function recordBriefAccept(type){
-  const m=getBriefDismissMap();
-  if(m[type]){m[type].count=0;try{localStorage.setItem(BRIEF_DISMISS_KEY,JSON.stringify(m));}catch{}}
-}
-
-// ═══ AI 伴侣（光球）配置 ═══
-const COMPANION_KEY="tlk_companion_v1";
-const COMPANION_DEFAULTS={
-  enabled:true,
-  wanderMode:"wander",
-  voiceEnabled:true,
-  voiceProfile:"cancan",
-  volume:0.8,
-  briefFreq:"medium",
-  nightSilent:true,
-  nightStart:22,
-  nightEnd:8,
-  signals:{
-    morning:true,
-    delay:true,
-    overload:true,
-    weekly:true,
-    rhythm:true,
-    drift:true,
-    celebrate:true,
-  },
-};
-function getCompanionConfig(){
-  try{const r=localStorage.getItem(COMPANION_KEY);return r?{...COMPANION_DEFAULTS,...JSON.parse(r)}:COMPANION_DEFAULTS;}catch{return COMPANION_DEFAULTS;}
-}
-function setCompanionConfig(cfg){
-  try{localStorage.setItem(COMPANION_KEY,JSON.stringify(cfg));}catch{}
-}
-function isInNightSilent(){
-  const cfg=getCompanionConfig();
-  if(!cfg.nightSilent)return false;
-  const h=new Date().getHours();
-  if(cfg.nightStart>cfg.nightEnd){
-    return h>=cfg.nightStart||h<cfg.nightEnd;
-  }
-  return h>=cfg.nightStart&&h<cfg.nightEnd;
-}
-
-
 let _audioCtx=null;
 function getAudioCtx(){
   if(_audioCtx)return _audioCtx;
@@ -650,88 +568,140 @@ const SOUNDS={
 };
 window.__playSound=(name)=>{const fn=SOUNDS[name];if(fn)fn();};
 
+// ═══ BRIEFINGS（主动 AI 建议系统）═══
+const BRIEFINGS_KEY="tlk_briefings_v1";
+const BRIEF_DISMISS_KEY="tlk_brief_dismiss_v1";
+
+function getBriefings(){
+  try{const r=localStorage.getItem(BRIEFINGS_KEY);return r?JSON.parse(r):[];}catch{return[];}
+}
+function setBriefingsStorage(arr){
+  try{
+    const now=Date.now();
+    const cleaned=arr.filter(b=>b.ts>now-30*86400000).slice(-50);
+    localStorage.setItem(BRIEFINGS_KEY,JSON.stringify(cleaned));
+  }catch(e){console.warn("[briefings] save failed",e);}
+}
+
+function getBriefDismissMap(){
+  try{const r=localStorage.getItem(BRIEF_DISMISS_KEY);return r?JSON.parse(r):{};}catch{return{};}
+}
+function isBriefTypeDisabled(type){
+  const m=getBriefDismissMap();
+  const rec=m[type];
+  if(!rec)return false;
+  if(rec.disabledUntil&&Date.now()<rec.disabledUntil)return true;
+  return false;
+}
+function recordBriefDismiss(type){
+  const m=getBriefDismissMap();
+  const rec=m[type]||{count:0,disabledUntil:0};
+  rec.count=(rec.count||0)+1;
+  if(rec.count>=3){
+    rec.disabledUntil=Date.now()+7*86400000;
+    rec.count=0;
+  }
+  m[type]=rec;
+  try{localStorage.setItem(BRIEF_DISMISS_KEY,JSON.stringify(m));}catch{}
+}
+function recordBriefAccept(type){
+  const m=getBriefDismissMap();
+  if(m[type]){m[type].count=0;try{localStorage.setItem(BRIEF_DISMISS_KEY,JSON.stringify(m));}catch{}}
+}
+
+// ═══ AI 伴侣（光球）配置 ═══
+const COMPANION_KEY="tlk_companion_v1";
+const COMPANION_DEFAULTS={
+  enabled:true,
+  wanderMode:"wander",
+  voiceEnabled:true,
+  voiceProfile:"vivi",
+  volume:0.8,
+  briefFreq:"medium",
+  nightSilent:true,
+  nightStart:22,
+  nightEnd:8,
+  signals:{
+    morning:true,
+    delay:true,
+    overload:true,
+    weekly:true,
+    rhythm:true,
+    drift:true,
+    celebrate:true,
+  },
+};
+function getCompanionConfig(){
+  try{const r=localStorage.getItem(COMPANION_KEY);return r?{...COMPANION_DEFAULTS,...JSON.parse(r)}:COMPANION_DEFAULTS;}catch{return COMPANION_DEFAULTS;}
+}
+function setCompanionConfig(cfg){
+  try{localStorage.setItem(COMPANION_KEY,JSON.stringify(cfg));}catch{}
+}
+function isInNightSilent(){
+  const cfg=getCompanionConfig();
+  if(!cfg.nightSilent)return false;
+  const h=new Date().getHours();
+  if(cfg.nightStart>cfg.nightEnd){
+    return h>=cfg.nightStart||h<cfg.nightEnd;
+  }
+  return h>=cfg.nightStart&&h<cfg.nightEnd;
+}
+
 // ═══ AI Configuration ═══
 // 同域调用 Cloudflare Pages Functions（无 CORS 预检，国内运营商不拦截）
 const AI_WORKER_URL="/api/ai";
 const EMAIL_API_URL="/api/email";
-const TTS_API_URL="/api/tts"; // 火山引擎 TTS 代理
+const TTS_API_URL="/api/tts";
 const EMAIL_FORWARD_KEY="tlk_email_forward_v1"; // 转发邮箱地址
 
-// ═══ TTS 服务（云端高质量语音 - 火山引擎）═══
-// 4 种声线（火山引擎 voice_type）
+// ═══ TTS 服务（火山引擎云端语音）═══
+// 用户实测可用的 4 个音色 ID
 const TTS_VOICES={
-  cancan:   {name:"灿灿", desc:"温柔甜美 · 默认", voiceType:"zh_female_cancan_mars_bigtts", speedRatio:1.0, pitchRatio:1.0},
-  vivi:     {name:"Vivi", desc:"自然活泼女声", voiceType:"zh_female_vv_uranus_bigtts", speedRatio:1.0, pitchRatio:1.0},
-  yangguang:{name:"阳光", desc:"阳光男声 · 充满活力", voiceType:"zh_male_yangguangqingnian_emo_v2_mars_bigtts", speedRatio:1.0, pitchRatio:1.0},
-  lengku:   {name:"冷酷", desc:"冷酷男声 · 沉稳低音", voiceType:"zh_male_lengkugege_emo_v2_mars_bigtts", speedRatio:0.95, pitchRatio:0.95},
+  vivi:      {name:"Vivi 2.0", desc:"自然活泼女声 · 默认", voiceType:"zh_female_vv_uranus_bigtts", speedRatio:1.0, pitchRatio:1.0},
+  xiaohe:    {name:"小何", desc:"温柔知性女声", voiceType:"zh_female_xiaohe_uranus_bigtts", speedRatio:1.0, pitchRatio:1.0},
+  shaonian:  {name:"少年梓辛", desc:"少年活力男声", voiceType:"zh_male_shaonianzixin_uranus_bigtts", speedRatio:1.0, pitchRatio:1.0},
+  cancan:    {name:"灿灿", desc:"温柔甜美女声", voiceType:"zh_female_cancan_mars_bigtts", speedRatio:1.0, pitchRatio:1.0},
 };
 
-// TTS 调用主入口：返回播放控制对象 { audio, play, pause, stop, onEnd, onProgress }
-// 策略：
-//   1. 立刻用 Web Speech API 抢先发声（防延迟）
-//   2. 同时请求云端 TTS
-//   3. 云端返回后停止本地、播放云端（更自然）
-//   4. 云端失败则本地继续兜底
-async function speakBriefing(text,voiceKey="cancan",opts={}){
+async function speakBriefing(text,voiceKey="vivi",opts={}){
   const cfg=getCompanionConfig();
   if(!cfg.voiceEnabled||isInNightSilent())return null;
   if(!text||!text.trim())return null;
-  
-  const voice=TTS_VOICES[voiceKey]||TTS_VOICES.cancan;
+
+  const voice=TTS_VOICES[voiceKey]||TTS_VOICES.vivi;
   const volume=opts.volume!==undefined?opts.volume:cfg.volume;
   const onProgress=opts.onProgress||(()=>{});
   const onEnd=opts.onEnd||(()=>{});
-  
-  // 控制对象
+
   const ctrl={
     stopped:false,
-    paused:false,
     audio:null,
-    localUtter:null,
-    cloudReady:false,
     stop(){
       this.stopped=true;
-      if(this.localUtter)try{window.speechSynthesis.cancel();}catch{}
+      try{window.speechSynthesis.cancel();}catch{}
       if(this.audio){try{this.audio.pause();this.audio.currentTime=0;}catch{}}
       onEnd&&onEnd("stopped");
     },
-    pause(){
-      this.paused=true;
-      if(this.audio)try{this.audio.pause();}catch{}
-      if(this.localUtter)try{window.speechSynthesis.pause();}catch{}
-    },
-    resume(){
-      this.paused=false;
-      if(this.audio)try{this.audio.play();}catch{}
-      if(this.localUtter)try{window.speechSynthesis.resume();}catch{}
-    },
   };
-  
-  // ─── 1. 本地 TTS 立刻发声（抢延迟）───
+
+  // 本地 TTS 抢先（防延迟）
   let localStarted=false;
   if(window.speechSynthesis){
     try{
       const u=new SpeechSynthesisUtterance(text);
-      u.lang="zh-CN";
-      u.rate=voice.speedRatio||1;
-      u.pitch=voice.pitchRatio||1;
-      u.volume=volume;
+      u.lang="zh-CN";u.rate=voice.speedRatio||1;u.pitch=voice.pitchRatio||1;u.volume=volume;
       const voices=window.speechSynthesis.getVoices();
       const zhVoice=voices.find(v=>v.lang.startsWith("zh"));
       if(zhVoice)u.voice=zhVoice;
-      // 字幕进度
       u.onboundary=(e)=>{if(!ctrl.stopped&&!ctrl.cloudReady)onProgress({charIndex:e.charIndex,full:text});};
-      u.onend=()=>{
-        if(!ctrl.stopped&&!ctrl.cloudReady)onEnd("local-end");
-      };
-      ctrl.localUtter=u;
-      window.speechSynthesis.cancel(); // 清掉队列
+      u.onend=()=>{if(!ctrl.stopped&&!ctrl.cloudReady)onEnd("local-end");};
+      window.speechSynthesis.cancel();
       window.speechSynthesis.speak(u);
       localStarted=true;
     }catch(e){console.warn("[TTS] 本地失败",e);}
   }
-  
-  // ─── 2. 同时请求云端 TTS ───
+
+  // 云端 TTS
   try{
     const{data}=await supabase.auth.getSession();
     const token=data.session?.access_token;
@@ -748,19 +718,16 @@ async function speakBriefing(text,voiceKey="cancan",opts={}){
     });
     if(!resp.ok){
       const errTxt=await resp.text().catch(()=>"");
-      throw new Error("TTS HTTP "+resp.status+" "+errTxt.slice(0,100));
+      throw new Error("HTTP "+resp.status+" "+errTxt.slice(0,150));
     }
-    // 返回的是音频 blob (mp3)
     const blob=await resp.blob();
     if(ctrl.stopped)return ctrl;
-    // 云端成功 - 停止本地，播放云端
     if(localStarted)try{window.speechSynthesis.cancel();}catch{}
     const url=URL.createObjectURL(blob);
     const audio=new Audio(url);
     audio.volume=volume;
     audio.onended=()=>{URL.revokeObjectURL(url);onEnd("cloud-end");};
     audio.onerror=()=>{URL.revokeObjectURL(url);onEnd("cloud-error");};
-    // 模拟 progress（按总时长平均分配字符）
     audio.onloadedmetadata=()=>{
       const dur=audio.duration*1000;
       const total=text.length;
@@ -779,12 +746,10 @@ async function speakBriefing(text,voiceKey="cancan",opts={}){
     audio.play().catch(e=>console.warn("[TTS] 云端播放失败",e));
   }catch(e){
     console.warn("[TTS] 云端失败，已用本地兜底:",e.message);
-    // 本地已经在播了 - 不做任何事，让它播完
   }
-  
+
   return ctrl;
 }
-
 
 // 通用 AI 调用：通过 Cloudflare Worker 中转到 DeepSeek
 // 参数：messages 数组、可选 options（temperature/max_tokens 等）
@@ -2886,52 +2851,33 @@ function MainApp({user}){
     return()=>clearInterval(t);
   },[today]);
 
-  // ─── INSIGHT ENGINE 主调度 ───
-  // 启动时立刻跑一次（如果是 9-10 点会触发早安）
-  // 之后每 30 分钟跑一次
+  // INSIGHT ENGINE 主调度
   useEffect(()=>{
     if(!loaded)return;
     let cancelled=false;
     const tick=()=>{
       if(cancelled||document.hidden)return;
-      insightEngineTick(tasks,today,pushBriefing).catch(e=>console.warn("[insight tick]",e));
+      insightEngineTick(tasks,today).catch(e=>console.warn("[insight tick]",e));
     };
-    // 启动延迟 5s 让数据加载完
     const initialTimer=setTimeout(tick,5000);
-    // 定时 30min
     const interval=setInterval(tick,30*60*1000);
     return()=>{cancelled=true;clearTimeout(initialTimer);clearInterval(interval);};
-  },[loaded,today,tasks.length]);
+  },[loaded,today]);
 
-  // ─── BRIEFING ACTION 监听器 ───
-  // 当用户点击 briefing 卡片上的按钮，事件冒泡到这里执行
+  // BRIEFING ACTION 处理
   useEffect(()=>{
     const handler=(ev)=>{
       const{brief,action}=ev.detail||{};
       if(!action)return;
-      const a=action.action;
-      const p=action.payload||{};
+      const a=action.action;const p=action.payload||{};
       if(a==="delete_task"&&p.taskId){
         const t=tasks.find(t=>t.id===p.taskId);
-        if(t){
-          setTasks(list=>list.filter(x=>x.id!==p.taskId));
-          setTrash(list=>[...list,{...t,deletedAt:Date.now()}]);
-          showToast&&showToast("任务已删除","success");
-        }
+        if(t){setTasks(list=>list.filter(x=>x.id!==p.taskId));setTrash(list=>[...list,{...t,deletedAt:Date.now()}]);showToast&&showToast("任务已删除","success");}
       }else if(a==="set_today"&&p.taskId){
         setTasks(list=>list.map(t=>t.id===p.taskId?{...t,due:today}:t));
         showToast&&showToast("已挪到今日","success");
-      }else if(a==="smart_schedule"){
-        requestAiPlan&&requestAiPlan();
-      }else if(a==="expand_task"&&p.taskTitle){
-        // 让 AI 拆解 - 跳转到 AI 助手并自动发消息
-        setView("assistant");
-        setTimeout(()=>{
-          window.dispatchEvent(new CustomEvent("tlk-assistant-auto-prompt",{detail:{prompt:`请帮我把任务「${p.taskTitle}」拆解成 3-5 个可执行的小步骤，并直接创建为子任务`}}));
-        },300);
-      }else if(a==="snooze"){
-        showToast&&showToast("已暂时关闭","info");
-      }
+      }else if(a==="smart_schedule"){requestAiPlan&&requestAiPlan();}
+      else if(a==="snooze"){showToast&&showToast("已暂时关闭","info");}
     };
     window.addEventListener("tlk-brief-action",handler);
     return()=>window.removeEventListener("tlk-brief-action",handler);
@@ -3467,21 +3413,7 @@ function MainApp({user}){
       {autoReport&&<AiReportModal th={th} report={autoReport} onClose={()=>setAutoReport(null)}/>}
       {weeklyInsight&&<WeeklyInsightModal th={th} insight={weeklyInsight} profile={getProfile()} onClose={()=>setWeeklyInsight(null)}/>}
       {showSettings&&<Settings th={th} themeId={themeId} setThemeId={setThemeId} cats={cats} setCats={setCats} projects={projects} setProjects={setProjects} tasks={tasks} history={history} setTasks={setTasks} setHistory={setHistory} trash={trash} restoreTask={restoreTask} purgeTask={purgeTask} emptyTrash={emptyTrash} tags={tags} addTag={addTag} updateTag={updateTag} removeTag={removeTag} onClose={()=>setShowSettings(false)} user={user} onSignOut={signOut} notifPerm={notifPerm} askNotif={askNotif} installPWA={installPWA} installState={installState} today={today} showToast={showToast} catOf={catOf} requestProfileUpdate={requestProfileUpdate} requestWeeklyInsight={requestWeeklyInsight} profileGenerating={profileGenerating}/>}
-      
-      {/* AI 光球伴侣 — 浮于所有视图之上 */}
-      <FloatingOrb 
-        tasks={tasks} 
-        today={today} 
-        onOpenAssistant={(briefings)=>{
-          setView("assistant");
-          // 把 briefings 通过事件传给 AssistantView
-          if(briefings&&briefings.length>0){
-            window.dispatchEvent(new CustomEvent("tlk-assistant-context",{detail:{briefings}}));
-          }
-        }}
-        showToast={showToast}
-        user={user}
-      />
+      <FloatingOrb tasks={tasks} today={today} onOpenAssistant={(briefings)=>{setView("assistant");}} showToast={showToast} user={user}/>
     </div>
   );
 }
@@ -5296,50 +5228,31 @@ function MarkdownText({text,th}){
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// INSIGHT ENGINE — 7 个 detector 函数
+// INSIGHT ENGINE — detector 函数
 // ═══════════════════════════════════════════════════════════════════
-
-// #1 早安规划 detector
-// 触发条件：每天 6:30-10:30 之间首次访问 + 今天还没生成过早安 brief
 function detectMorningPlan(tasks,today,_cfg){
   if(!_cfg.signals.morning)return null;
   if(isBriefTypeDisabled("morning"))return null;
   const h=new Date().getHours();
   if(h<6||h>10)return null;
-  // 今天是否已经生成过早安
   const todayMorning=getBriefings().find(b=>b.type==="morning"&&new Date(b.ts).toDateString()===new Date().toDateString());
   if(todayMorning)return null;
-  
   const todayTasks=tasks.filter(t=>!t.done&&t.due===today);
   if(todayTasks.length===0)return null;
-  
   const highCount=todayTasks.filter(t=>t.priority==="高").length;
   const totalMins=todayTasks.reduce((s,t)=>s+(t.duration||60),0);
-  
-  return{
-    type:"morning",
-    sender:"strategist",
-    title:"早安规划",
-    severity:"medium",
-    data:{count:todayTasks.length,highCount,totalMins,sample:todayTasks.slice(0,3).map(t=>t.title)},
-  };
+  return{type:"morning",sender:"strategist",title:"早安规划",severity:"medium",data:{count:todayTasks.length,highCount,totalMins,sample:todayTasks.slice(0,3).map(t=>t.title)}};
 }
 
-// #2 拖延检测
-// 触发条件：任务 due 早于今天且未完成（逾期）超过 3 天
 function detectDelay(tasks,today,_cfg){
   if(!_cfg.signals.delay)return null;
   if(isBriefTypeDisabled("delay"))return null;
-  
   const delayed=tasks.filter(t=>{
-    if(t.done)return false;
-    if(!t.due)return false;
+    if(t.done||!t.due)return false;
     const overdueDays=Math.floor((new Date(today)-new Date(t.due))/86400000);
     return overdueDays>=3;
   });
   if(delayed.length===0)return null;
-  
-  // 取最严重的（拖延最久）
   delayed.sort((a,b)=>{
     const da=Math.floor((new Date(today)-new Date(a.due))/86400000);
     const db=Math.floor((new Date(today)-new Date(b.due))/86400000);
@@ -5347,40 +5260,19 @@ function detectDelay(tasks,today,_cfg){
   });
   const worst=delayed[0];
   const days=Math.floor((new Date(today)-new Date(worst.due))/86400000);
-  
-  // 同名/同分类的拖延检测
-  const sameCategory=delayed.filter(t=>t.category===worst.category).length;
-  
-  return{
-    type:"delay",
-    sender:"coach",
-    title:"拖延提醒",
-    severity:days>=7?"high":"medium",
-    data:{taskId:worst.id,taskTitle:worst.title,days,total:delayed.length,sameCategory},
-  };
+  return{type:"delay",sender:"coach",title:"拖延提醒",severity:days>=7?"high":"medium",data:{taskId:worst.id,taskTitle:worst.title,days,total:delayed.length}};
 }
 
-// #3 过载预警
 function detectOverload(tasks,today,_cfg){
   if(!_cfg.signals.overload)return null;
   if(isBriefTypeDisabled("overload"))return null;
-  
   const todayTasks=tasks.filter(t=>!t.done&&t.due===today);
   const totalMins=todayTasks.reduce((s,t)=>s+(t.duration||60),0);
   const totalHours=totalMins/60;
-  
   if(todayTasks.length<8&&totalHours<8)return null;
-  
-  return{
-    type:"overload",
-    sender:"strategist",
-    title:"过载预警",
-    severity:totalHours>10?"high":"medium",
-    data:{count:todayTasks.length,totalHours:totalHours.toFixed(1)},
-  };
+  return{type:"overload",sender:"strategist",title:"过载预警",severity:totalHours>10?"high":"medium",data:{count:todayTasks.length,totalHours:totalHours.toFixed(1)}};
 }
 
-// 运行所有 detectors
 function runInsightDetectors(tasks,today,cfg){
   const signals=[];
   [detectMorningPlan,detectDelay,detectOverload].forEach(fn=>{
@@ -5389,203 +5281,146 @@ function runInsightDetectors(tasks,today,cfg){
   return signals;
 }
 
-// 生成 AI 文案 - 调 callAI（已有）
-async function generateBriefingMessage(signal,profile){
+async function generateBriefingMessage(signal){
   const data=signal.data;
   let prompt="";
   if(signal.type==="morning"){
     prompt=`你是用户的 AI 工作伙伴 Linek。请用温柔活泼的口吻生成一段早安提醒。
-
 今天的任务情况：
 - 共 ${data.count} 项任务
 - 其中 ${data.highCount} 项高优先级
 - 预估总耗时 ${Math.round(data.totalMins/60)} 小时
 - 示例任务：${data.sample.join("、")}
-
-要求：
-1. 30-60 字
-2. 像朋友一样自然，不要客套
-3. 突出 1-2 个关键信息（如高优数量或总时长）
-4. 末尾不要问"有什么我能帮你"这种空话
-5. 直接以"早上好"等开头`;
+要求：30-60 字，像朋友一样自然，突出关键信息，末尾不要问问题，以"早上好"开头`;
   }else if(signal.type==="delay"){
     prompt=`你是用户的 AI 教练。用户有任务拖延了，请生成温和但直接的提醒。
-
 拖延详情：
 - 任务："${data.taskTitle}"
 - 已拖延 ${data.days} 天
 - 总共 ${data.total} 项任务逾期
-
-要求：
-1. 30-60 字
-2. 不要批评的语气，要提示性
-3. 直接说出任务名（用引号包起来）
-4. 末尾不要问问题`;
+要求：30-60 字，提示性而非批评，直接说出任务名（用引号），末尾不问问题`;
   }else if(signal.type==="overload"){
-    prompt=`你是用户的 AI 策略师。今天用户安排过满，请生成温和的提醒。
-
-详情：
-- ${data.count} 项任务，总预估 ${data.totalHours} 小时
-
-要求：
-1. 30-60 字
-2. 提醒过载但不焦虑
-3. 暗示可以调整安排
-4. 末尾不要问问题`;
+    prompt=`你是用户的 AI 策略师。今天用户安排过满，请生成温和提醒。
+详情：${data.count} 项任务，总预估 ${data.totalHours} 小时
+要求：30-60 字，提醒但不焦虑，暗示可调整`;
   }
-  if(!prompt)return signal.title+" - "+JSON.stringify(data);
-  
+  if(!prompt)return signal.title;
   try{
     const msg=await callAI([{role:"user",content:prompt}],{max_tokens:200,temperature:0.7});
     return msg.replace(/^["']|["']$/g,"").trim();
   }catch(e){
-    console.warn("[briefing] AI 失败，用 fallback:",e);
-    // fallback 文案
     if(signal.type==="morning")return`早上好！今天有 ${data.count} 项任务等着你${data.highCount>0?`，其中 ${data.highCount} 项是高优先级`:""}。`;
     if(signal.type==="delay")return`「${data.taskTitle}」已经拖了 ${data.days} 天了，要不要今天解决一下？`;
-    if(signal.type==="overload")return`今天安排了 ${data.count} 项任务共 ${data.totalHours} 小时，节奏有点紧，要不要看看能挪几个？`;
+    if(signal.type==="overload")return`今天安排了 ${data.count} 项任务共 ${data.totalHours} 小时，节奏有点紧。`;
     return signal.title;
   }
 }
 
-// 生成 actions（briefing 卡片上的按钮）
 function generateBriefingActions(signal){
-  if(signal.type==="morning"){
-    return[
-      {label:"AI 帮我排期",action:"smart_schedule"},
-      {label:"我自己安排",action:"snooze"},
-    ];
-  }
-  if(signal.type==="delay"){
-    return[
-      {label:"今天就做",action:"set_today",payload:{taskId:signal.data.taskId}},
-      {label:"AI 帮我拆解",action:"expand_task",payload:{taskId:signal.data.taskId,taskTitle:signal.data.taskTitle}},
-      {label:"删除",action:"delete_task",payload:{taskId:signal.data.taskId}},
-    ];
-  }
-  if(signal.type==="overload"){
-    return[
-      {label:"AI 帮我精简",action:"trim_today"},
-      {label:"挪到明天",action:"defer_some"},
-    ];
-  }
+  if(signal.type==="morning")return[{label:"AI 帮我排期",action:"smart_schedule"},{label:"我自己安排",action:"snooze"}];
+  if(signal.type==="delay")return[
+    {label:"今天就做",action:"set_today",payload:{taskId:signal.data.taskId}},
+    {label:"AI 帮我拆解",action:"expand_task",payload:{taskId:signal.data.taskId,taskTitle:signal.data.taskTitle}},
+    {label:"删除",action:"delete_task",payload:{taskId:signal.data.taskId}},
+  ];
+  if(signal.type==="overload")return[{label:"AI 帮我精简",action:"trim_today"},{label:"挪到明天",action:"defer_some"}];
   return[];
 }
 
-// Insight Engine 主入口 - 定时调用
-async function insightEngineTick(tasks,today,addBrief){
+async function insightEngineTick(tasks,today){
   const cfg=getCompanionConfig();
   if(!cfg.enabled||cfg.briefFreq==="off")return;
-  
   const signals=runInsightDetectors(tasks,today,cfg);
   if(signals.length===0)return;
-  
-  // 过滤近期已生成的（防重）
   const existing=getBriefings();
-  const filtered=signals.filter(s=>{
-    return!existing.find(b=>b.type===s.type&&Date.now()-b.ts<30*60*1000); // 30min 防重
-  });
-  
+  const filtered=signals.filter(s=>!existing.find(b=>b.type===s.type&&Date.now()-b.ts<30*60*1000));
   for(const sig of filtered){
     try{
-      const message=await generateBriefingMessage(sig,null);
+      const message=await generateBriefingMessage(sig);
       const actions=generateBriefingActions(sig);
-      const brief=pushBriefing({
-        type:sig.type,
-        sender:sig.sender,
-        title:sig.title,
-        message,
-        actions,
-        severity:sig.severity,
-        rawData:sig.data,
-      });
-      // 同时也写入 Inbox 归档
-      addToInbox({
-        from:sig.sender,
-        type:"briefing_"+sig.type,
-        subject:`[${sig.title}] ${message.slice(0,30)}`,
-        preview:message,
-        content:message,
-        rawData:sig.data,
-      });
+      pushBriefing({type:sig.type,sender:sig.sender,title:sig.title,message,actions,severity:sig.severity,rawData:sig.data});
+      addToInbox({from:sig.sender,type:"briefing_"+sig.type,subject:`[${sig.title}] ${message.slice(0,30)}`,preview:message,content:message,rawData:sig.data});
     }catch(e){console.warn("[insight] 处理 signal 失败:",e);}
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// AI 光球伴侣 — Linek 的"在场感"
-// ═══════════════════════════════════════════════════════════════════
-// 组件结构：
-//   FloatingOrb (主入口) ← 由 MainApp 渲染
-//     ├ OrbBody       光球本体（带状态：idle/excited/shy/speaking/sleeping）
-//     ├ OrbBriefing   弹出 briefing 卡片
-//     └ OrbCaption    语音字幕（说话时浮于卡片下方）
-// ═══════════════════════════════════════════════════════════════════
+function pushBriefing(b){
+  const newBrief={
+    id:"br_"+Date.now()+"_"+Math.floor(Math.random()*10000),
+    ts:Date.now(),read:false,accepted:false,dismissed:false,
+    type:b.type||"general",sender:b.sender||"coach",
+    title:b.title||"AI 建议",message:b.message||"",
+    actions:Array.isArray(b.actions)?b.actions:[],
+    severity:b.severity||"medium",
+    expiresAt:b.expiresAt||Date.now()+7*86400000,
+    ...b,
+  };
+  const all=[...getBriefings(),newBrief];
+  setBriefingsStorage(all);
+  window.dispatchEvent(new CustomEvent("tlk-briefings-changed"));
+  return newBrief;
+}
 
-// 屏幕九宫格安全区计算（4x3 = 12 个区域）
+// ═══════════════════════════════════════════════════════════════════
+// AI 光球伴侣
+// ═══════════════════════════════════════════════════════════════════
 function calcSafeSlots(){
   const W=window.innerWidth,H=window.innerHeight;
-  const slots=[];
-  const cols=4,rows=3;
-  // 每个 slot 中心点（避开边缘 60px）
-  const padding=80;
-  for(let r=0;r<rows;r++){
-    for(let c=0;c<cols;c++){
-      const x=padding+(c+0.5)*(W-padding*2)/cols;
-      const y=padding+(r+0.5)*(H-padding*2)/rows;
-      slots.push({x,y,row:r,col:c,score:100});
+  const slots=[];const padding=80;
+  for(let r=0;r<3;r++){
+    for(let c=0;c<4;c++){
+      const x=padding+(c+0.5)*(W-padding*2)/4;
+      const y=padding+(r+0.5)*(H-padding*2)/3;
+      slots.push({x,y,score:100});
     }
   }
-  // 扫描页面元素，给中心区域减分（避开输入框/弹窗等）
   try{
-    document.querySelectorAll("input:focus,textarea:focus,[role='dialog'],.glass-strong").forEach(el=>{
+    document.querySelectorAll("input:focus,textarea:focus,[role='dialog']").forEach(el=>{
       const rect=el.getBoundingClientRect();
       slots.forEach(s=>{
-        if(s.x>rect.left-50&&s.x<rect.right+50&&s.y>rect.top-50&&s.y<rect.bottom+50){
-          s.score-=60;
-        }
+        if(s.x>rect.left-50&&s.x<rect.right+50&&s.y>rect.top-50&&s.y<rect.bottom+50){s.score-=60;}
       });
     });
   }catch{}
   return slots.filter(s=>s.score>40);
 }
 
+function throttleMove(fn,wait){
+  let last=0;let queued=null;
+  return(...args)=>{
+    const now=Date.now();
+    if(now-last>wait){last=now;fn(...args);queued=null;}
+    else if(!queued){queued=setTimeout(()=>{last=Date.now();fn(...args);queued=null;},wait);}
+  };
+}
+
 function FloatingOrb({tasks,today,onOpenAssistant,showToast,user}){
   const[cfg,setCfg]=useState(()=>getCompanionConfig());
   const[briefings,setBriefings]=useState(()=>getBriefings().filter(b=>!b.read&&!b.dismissed));
-  const[expanded,setExpanded]=useState(false); // 卡片是否打开
-  const[pos,setPos]=useState({x:typeof window!=="undefined"?window.innerWidth-100:1000, y:typeof window!=="undefined"?window.innerHeight-120:600});
-  const[state,setState]=useState("idle"); // idle/excited/shy/speaking/sleeping/celebrating
-  const[caption,setCaption]=useState(""); // 语音字幕
+  const[expanded,setExpanded]=useState(false);
+  const[pos,setPos]=useState({x:typeof window!=="undefined"?window.innerWidth-100:1000,y:typeof window!=="undefined"?window.innerHeight-120:600});
+  const[state,setState]=useState("idle");
+  const[caption,setCaption]=useState("");
   const speakCtrlRef=useRef(null);
   const wanderTimerRef=useRef(null);
   const isDraggingRef=useRef(false);
   const dragStartRef=useRef(null);
-  const mousePosRef=useRef({x:-9999,y:-9999});
 
-  // ─── 漫游引擎 ───
   useEffect(()=>{
-    if(!cfg.enabled||cfg.wanderMode!=="wander")return;
-    if(expanded)return; // 卡片展开时不漫游
-    
+    if(!cfg.enabled||cfg.wanderMode!=="wander"||expanded)return;
     const moveNext=()=>{
       if(document.hidden||isDraggingRef.current)return scheduleNext();
       const slots=calcSafeSlots();
       if(slots.length===0)return scheduleNext();
-      // 60% 远飞 / 25% 邻近 / 15% 随机
       const r=Math.random();
       let target;
-      if(r<0.60){
-        // 找离当前位置最远的几个，随机一个
+      if(r<0.6){
         const sorted=slots.map(s=>({...s,dist:Math.hypot(s.x-pos.x,s.y-pos.y)})).sort((a,b)=>b.dist-a.dist);
         target=sorted[Math.floor(Math.random()*Math.min(3,sorted.length))];
       }else if(r<0.85){
-        // 邻近：最近的几个
         const sorted=slots.map(s=>({...s,dist:Math.hypot(s.x-pos.x,s.y-pos.y)})).sort((a,b)=>a.dist-b.dist);
         target=sorted[Math.floor(Math.random()*Math.min(3,sorted.length))]||sorted[0];
-      }else{
-        target=slots[Math.floor(Math.random()*slots.length)];
-      }
+      }else{target=slots[Math.floor(Math.random()*slots.length)];}
       if(target)setPos({x:target.x,y:target.y});
       scheduleNext();
     };
@@ -5597,15 +5432,12 @@ function FloatingOrb({tasks,today,onOpenAssistant,showToast,user}){
     return()=>{if(wanderTimerRef.current)clearTimeout(wanderTimerRef.current);};
   },[cfg.enabled,cfg.wanderMode,expanded,pos.x,pos.y]);
 
-  // ─── 鼠标害羞效应 ───
   useEffect(()=>{
     if(!cfg.enabled||expanded)return;
     const onMove=(e)=>{
-      mousePosRef.current={x:e.clientX,y:e.clientY};
       const dist=Math.hypot(e.clientX-pos.x,e.clientY-pos.y);
       if(dist<100&&!isDraggingRef.current){
         setState("shy");
-        // 反方向飘开
         const ang=Math.atan2(pos.y-e.clientY,pos.x-e.clientX);
         const flee=40;
         setPos(p=>({x:Math.max(40,Math.min(window.innerWidth-40,p.x+Math.cos(ang)*flee)),y:Math.max(40,Math.min(window.innerHeight-40,p.y+Math.sin(ang)*flee))}));
@@ -5616,76 +5448,49 @@ function FloatingOrb({tasks,today,onOpenAssistant,showToast,user}){
     return()=>window.removeEventListener("mousemove",throttled);
   },[cfg.enabled,pos.x,pos.y,expanded]);
 
-  // 鼠标远离后恢复 idle 状态
   useEffect(()=>{
-    if(state==="shy"){
-      const t=setTimeout(()=>setState("idle"),1200);
-      return()=>clearTimeout(t);
-    }
+    if(state==="shy"){const t=setTimeout(()=>setState("idle"),1200);return()=>clearTimeout(t);}
   },[state]);
 
-  // ─── 监听 briefings 变化 ───
   useEffect(()=>{
     const update=()=>{
       const fresh=getBriefings().filter(b=>!b.read&&!b.dismissed);
-      setBriefings(fresh);
-      if(fresh.length>briefings.length){
-        // 有新消息 - 切换到 excited
-        setState("excited");
-        setTimeout(()=>setState("idle"),3000);
-      }
+      setBriefings(prev=>{
+        if(fresh.length>prev.length){setState("excited");setTimeout(()=>setState("idle"),3000);}
+        return fresh;
+      });
     };
     window.addEventListener("tlk-briefings-changed",update);
     const poll=setInterval(update,5000);
     return()=>{window.removeEventListener("tlk-briefings-changed",update);clearInterval(poll);};
-  },[briefings.length]);
-
-  // ─── 标签页失活时停止动画 ───
-  useEffect(()=>{
-    const onVis=()=>{
-      if(document.hidden&&speakCtrlRef.current){
-        speakCtrlRef.current.stop();
-      }
-    };
-    document.addEventListener("visibilitychange",onVis);
-    return()=>document.removeEventListener("visibilitychange",onVis);
   },[]);
 
-  // ─── 点击光球 ───
   const handleClick=()=>{
     if(isDraggingRef.current)return;
     setExpanded(e=>!e);
     setState("excited");
-    setTimeout(()=>setState(expanded?"idle":"excited"),400);
+    setTimeout(()=>setState("idle"),400);
   };
 
-  // ─── 拖拽 ───
   const handleDragStart=(e)=>{
     const cx=e.clientX||(e.touches&&e.touches[0].clientX);
     const cy=e.clientY||(e.touches&&e.touches[0].clientY);
     if(cx==null)return;
-    dragStartRef.current={mouseX:cx,mouseY:cy,orbX:pos.x,orbY:pos.y,moved:false};
-    
+    dragStartRef.current={mouseX:cx,mouseY:cy,orbX:pos.x,orbY:pos.y};
     const onMove=(ev)=>{
       const mx=ev.clientX||(ev.touches&&ev.touches[0].clientX);
       const my=ev.clientY||(ev.touches&&ev.touches[0].clientY);
       if(mx==null)return;
       const dx=mx-dragStartRef.current.mouseX;
       const dy=my-dragStartRef.current.mouseY;
-      if(Math.hypot(dx,dy)>5){
-        isDraggingRef.current=true;
-        dragStartRef.current.moved=true;
-      }
-      if(isDraggingRef.current){
-        setPos({x:dragStartRef.current.orbX+dx,y:dragStartRef.current.orbY+dy});
-      }
+      if(Math.hypot(dx,dy)>5)isDraggingRef.current=true;
+      if(isDraggingRef.current)setPos({x:dragStartRef.current.orbX+dx,y:dragStartRef.current.orbY+dy});
     };
     const onUp=()=>{
       window.removeEventListener("mousemove",onMove);
       window.removeEventListener("mouseup",onUp);
       window.removeEventListener("touchmove",onMove);
       window.removeEventListener("touchend",onUp);
-      // 延迟重置防止 click 误触发
       setTimeout(()=>{isDraggingRef.current=false;},100);
     };
     window.addEventListener("mousemove",onMove);
@@ -5694,41 +5499,29 @@ function FloatingOrb({tasks,today,onOpenAssistant,showToast,user}){
     window.addEventListener("touchend",onUp);
   };
 
-  // ─── 说话能力 ───
   const speak=async(text)=>{
     if(!cfg.voiceEnabled)return;
     if(speakCtrlRef.current)speakCtrlRef.current.stop();
-    setState("speaking");
-    setCaption(text);
+    setState("speaking");setCaption(text);
     speakCtrlRef.current=await speakBriefing(text,cfg.voiceProfile,{
       volume:cfg.volume,
       onProgress:(p)=>setCaption(p.full),
-      onEnd:()=>{
-        setState("idle");
-        setTimeout(()=>setCaption(""),3000);
-      },
+      onEnd:()=>{setState("idle");setTimeout(()=>setCaption(""),3000);},
     });
   };
 
-  // 暴露 speak 到 window 供外部调用（如 Insight Engine 触发）
   useEffect(()=>{
     window.__linekSpeak=speak;
-    window.__linekCelebrate=()=>{
-      setState("celebrating");
-      setTimeout(()=>setState("idle"),2500);
-    };
-    return()=>{delete window.__linekSpeak;delete window.__linekCelebrate;};
+    return()=>{delete window.__linekSpeak;};
   },[cfg.voiceEnabled,cfg.voiceProfile,cfg.volume]);
 
   if(!cfg.enabled)return null;
 
-  // 颜色根据状态变化
   const stateColors={
     idle:["#6d5fff","#a855f7","#ec4899"],
     excited:["#22d3ee","#a855f7","#ec4899"],
     shy:["#9333ea","#ec4899","#fb923c"],
     speaking:["#10d9a3","#22d3ee","#6d5fff"],
-    sleeping:["#475569","#64748b","#94a3b8"],
     celebrating:["#fbbf24","#ec4899","#22d3ee"],
   };
   const colors=stateColors[state]||stateColors.idle;
@@ -5736,165 +5529,44 @@ function FloatingOrb({tasks,today,onOpenAssistant,showToast,user}){
 
   return(
     <>
-      {/* 光球本体 */}
-      <div
-        onClick={handleClick}
-        onMouseDown={handleDragStart}
-        onTouchStart={handleDragStart}
-        style={{
-          position:"fixed",
-          left:pos.x-30,
-          top:pos.y-30,
-          width:60,height:60,
-          zIndex:9000,
-          cursor:isDraggingRef.current?"grabbing":"pointer",
-          transition:isDraggingRef.current?"none":"left 2.4s cubic-bezier(0.65,0,0.35,1),top 2.4s cubic-bezier(0.65,0,0.35,1)",
-          touchAction:"none",
-        }}
-      >
-        {/* 外圈呼吸光环（hasNews 时彩色脉冲） */}
-        {unread>0&&(
-          <div style={{
-            position:"absolute",inset:-8,borderRadius:"50%",
-            background:`conic-gradient(from 0deg,${colors[0]},${colors[1]},${colors[2]},${colors[0]})`,
-            opacity:0.4,
-            animation:"orbPulse 2s ease-in-out infinite",
-            filter:"blur(8px)",
-          }}/>
-        )}
-        {/* 主体：玻璃光球 */}
-        <div className={`orb-body orb-state-${state}`} style={{
-          position:"relative",width:"100%",height:"100%",borderRadius:"50%",
-          background:`conic-gradient(from 0deg,${colors[0]},${colors[1]},${colors[2]},${colors[0]})`,
-          boxShadow:`0 8px 32px ${colors[0]}66, 0 2px 8px ${colors[1]}44, inset 0 2px 8px rgba(255,255,255,0.4)`,
-          backdropFilter:"blur(10px)",
-          animation:`orbRotate 8s linear infinite, orbBreath 4s ease-in-out infinite${state==="excited"?",orbJump 0.6s ease-in-out":""}`,
-        }}>
-          {/* 内核 */}
-          <div style={{
-            position:"absolute",inset:6,borderRadius:"50%",
-            background:`radial-gradient(circle at 35% 30%,rgba(255,255,255,0.95),${colors[1]}88 40%,${colors[2]}66)`,
-            mixBlendMode:"screen",
-          }}/>
-          {/* 玻璃高光 */}
-          <div style={{
-            position:"absolute",top:8,left:14,width:18,height:14,borderRadius:"50%",
-            background:"radial-gradient(circle,rgba(255,255,255,0.85),transparent 70%)",
-            pointerEvents:"none",
-          }}/>
-          {/* 说话时的波纹 */}
-          {state==="speaking"&&(
-            <>
-              <div style={{position:"absolute",inset:0,borderRadius:"50%",border:"2px solid rgba(16,217,163,0.4)",animation:"orbWave 1.2s ease-out infinite"}}/>
-              <div style={{position:"absolute",inset:0,borderRadius:"50%",border:"2px solid rgba(34,211,238,0.3)",animation:"orbWave 1.2s ease-out infinite 0.4s"}}/>
-            </>
-          )}
+      <div onClick={handleClick} onMouseDown={handleDragStart} onTouchStart={handleDragStart} style={{position:"fixed",left:pos.x-30,top:pos.y-30,width:60,height:60,zIndex:9000,cursor:isDraggingRef.current?"grabbing":"pointer",transition:isDraggingRef.current?"none":"left 2.4s cubic-bezier(0.65,0,0.35,1),top 2.4s cubic-bezier(0.65,0,0.35,1)",touchAction:"none"}}>
+        {unread>0&&<div style={{position:"absolute",inset:-8,borderRadius:"50%",background:`conic-gradient(from 0deg,${colors[0]},${colors[1]},${colors[2]},${colors[0]})`,opacity:0.4,animation:"orbPulse 2s ease-in-out infinite",filter:"blur(8px)"}}/>}
+        <div style={{position:"relative",width:"100%",height:"100%",borderRadius:"50%",background:`conic-gradient(from 0deg,${colors[0]},${colors[1]},${colors[2]},${colors[0]})`,boxShadow:`0 8px 32px ${colors[0]}66, 0 2px 8px ${colors[1]}44, inset 0 2px 8px rgba(255,255,255,0.4)`,backdropFilter:"blur(10px)",animation:`orbRotate 8s linear infinite, orbBreath 4s ease-in-out infinite`}}>
+          <div style={{position:"absolute",inset:6,borderRadius:"50%",background:`radial-gradient(circle at 35% 30%,rgba(255,255,255,0.95),${colors[1]}88 40%,${colors[2]}66)`,mixBlendMode:"screen"}}/>
+          <div style={{position:"absolute",top:8,left:14,width:18,height:14,borderRadius:"50%",background:"radial-gradient(circle,rgba(255,255,255,0.85),transparent 70%)",pointerEvents:"none"}}/>
+          {state==="speaking"&&<>
+            <div style={{position:"absolute",inset:0,borderRadius:"50%",border:"2px solid rgba(16,217,163,0.4)",animation:"orbWave 1.2s ease-out infinite"}}/>
+            <div style={{position:"absolute",inset:0,borderRadius:"50%",border:"2px solid rgba(34,211,238,0.3)",animation:"orbWave 1.2s ease-out infinite 0.4s"}}/>
+          </>}
         </div>
-        {/* 未读角标 */}
-        {unread>0&&(
-          <div style={{
-            position:"absolute",top:-4,right:-4,
-            minWidth:18,height:18,padding:"0 5px",
-            borderRadius:9,
-            background:"linear-gradient(135deg,#ef4444,#ec4899)",
-            color:"#fff",fontSize:11,fontWeight:700,
-            display:"flex",alignItems:"center",justifyContent:"center",
-            boxShadow:"0 2px 8px rgba(239,68,68,0.5)",
-            letterSpacing:0,
-          }}>{unread>9?"9+":unread}</div>
-        )}
+        {unread>0&&<div style={{position:"absolute",top:-4,right:-4,minWidth:18,height:18,padding:"0 5px",borderRadius:9,background:"linear-gradient(135deg,#ef4444,#ec4899)",color:"#fff",fontSize:11,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 8px rgba(239,68,68,0.5)"}}>{unread>9?"9+":unread}</div>}
       </div>
 
-      {/* 字幕条 */}
-      {caption&&(
-        <div style={{
-          position:"fixed",
-          left:"50%",bottom:30,
-          transform:"translateX(-50%)",
-          maxWidth:"min(90vw,560px)",
-          padding:"10px 18px",
-          background:"rgba(20,18,38,0.92)",
-          color:"#fff",
-          borderRadius:14,
-          fontSize:14,lineHeight:1.55,
-          fontFamily:"inherit",
-          zIndex:8999,
-          boxShadow:"0 12px 36px rgba(0,0,0,0.3)",
-          backdropFilter:"blur(20px)",
-          border:"1px solid rgba(255,255,255,0.12)",
-          animation:"fadeInUp 0.3s ease",
-          textAlign:"center",
-        }}>
-          <div style={{fontSize:9,color:"#a78bfa",letterSpacing:"0.18em",marginBottom:4,fontWeight:600}}>LINEK SPEAKING</div>
-          <div>{caption}</div>
-        </div>
-      )}
+      {caption&&<div style={{position:"fixed",left:"50%",bottom:30,transform:"translateX(-50%)",maxWidth:"min(90vw,560px)",padding:"10px 18px",background:"rgba(20,18,38,0.92)",color:"#fff",borderRadius:14,fontSize:14,lineHeight:1.55,zIndex:8999,boxShadow:"0 12px 36px rgba(0,0,0,0.3)",backdropFilter:"blur(20px)",border:"1px solid rgba(255,255,255,0.12)",animation:"fadeInUp 0.3s ease",textAlign:"center"}}>
+        <div style={{fontSize:9,color:"#a78bfa",letterSpacing:"0.18em",marginBottom:4,fontWeight:600}}>LINEK SPEAKING</div>
+        <div>{caption}</div>
+      </div>}
 
-      {/* Briefing 弹出卡片 */}
-      {expanded&&<OrbBriefingCard
-        briefings={briefings}
-        orbPos={pos}
-        onClose={()=>setExpanded(false)}
-        onOpenAssistant={onOpenAssistant}
-        onAccept={(b)=>handleBriefingAccept(b,setBriefings,showToast)}
-        onDismiss={(b)=>handleBriefingDismiss(b,setBriefings)}
-        onMarkRead={(b)=>handleBriefingRead(b,setBriefings)}
-      />}
+      {expanded&&<OrbBriefingCard briefings={briefings} orbPos={pos} onClose={()=>setExpanded(false)} onOpenAssistant={onOpenAssistant} onAccept={(b)=>handleBriefingAccept(b,setBriefings,showToast)} onDismiss={(b)=>handleBriefingDismiss(b,setBriefings)}/>}
     </>
   );
 }
 
-// 节流 helper
-function throttleMove(fn,wait){
-  let last=0;let queued=null;
-  return(...args)=>{
-    const now=Date.now();
-    if(now-last>wait){last=now;fn(...args);queued=null;}
-    else if(!queued){
-      queued=setTimeout(()=>{last=Date.now();fn(...args);queued=null;},wait);
-    }
-  };
-}
-
-// ─── Briefing 卡片组件 ───
-function OrbBriefingCard({briefings,orbPos,onClose,onOpenAssistant,onAccept,onDismiss,onMarkRead}){
-  // 卡片定位：根据光球位置自动选择展开方向
+function OrbBriefingCard({briefings,orbPos,onClose,onOpenAssistant,onAccept,onDismiss}){
   const W=window.innerWidth,H=window.innerHeight;
   const cardWidth=Math.min(360,W-32);
   const cardHeight=Math.min(420,H-100);
-  // 默认左下展开
   let cardX=orbPos.x-cardWidth-20;
   let cardY=orbPos.y-cardHeight/2;
-  // 如果会被裁切，翻转方向
   if(cardX<10)cardX=orbPos.x+50;
   if(cardX+cardWidth>W-10)cardX=W-cardWidth-10;
   if(cardY<10)cardY=10;
   if(cardY+cardHeight>H-10)cardY=H-cardHeight-10;
-
   const hasItems=briefings&&briefings.length>0;
-
   return(
     <>
-      {/* 背景遮罩 */}
       <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:8998,background:"transparent"}}/>
-      {/* 卡片 */}
-      <div style={{
-        position:"fixed",
-        left:cardX,top:cardY,
-        width:cardWidth,maxHeight:cardHeight,
-        background:"rgba(255,255,255,0.98)",
-        borderRadius:18,
-        boxShadow:"0 24px 64px rgba(109,95,255,0.25),0 8px 24px rgba(0,0,0,0.08)",
-        border:"1px solid rgba(167,139,250,0.2)",
-        backdropFilter:"blur(20px)",
-        zIndex:9001,
-        display:"flex",flexDirection:"column",
-        overflow:"hidden",
-        animation:"orbCardEnter 0.35s cubic-bezier(0.34,1.56,0.64,1)",
-        transformOrigin:`${orbPos.x<cardX?0:cardWidth}px ${orbPos.y-cardY}px`,
-        fontFamily:"inherit",
-      }}>
-        {/* Header */}
+      <div style={{position:"fixed",left:cardX,top:cardY,width:cardWidth,maxHeight:cardHeight,background:"rgba(255,255,255,0.98)",borderRadius:18,boxShadow:"0 24px 64px rgba(109,95,255,0.25),0 8px 24px rgba(0,0,0,0.08)",border:"1px solid rgba(167,139,250,0.2)",backdropFilter:"blur(20px)",zIndex:9001,display:"flex",flexDirection:"column",overflow:"hidden",animation:"orbCardEnter 0.35s cubic-bezier(0.34,1.56,0.64,1)",fontFamily:"inherit"}}>
         <div style={{padding:"14px 16px 10px",borderBottom:"1px solid rgba(167,139,250,0.12)",display:"flex",alignItems:"center",gap:10}}>
           <div style={{width:24,height:24,borderRadius:"50%",background:"conic-gradient(from 0deg,#6d5fff,#a855f7,#ec4899,#6d5fff)",boxShadow:"0 2px 8px rgba(109,95,255,0.4)"}}/>
           <div style={{flex:1}}>
@@ -5903,14 +5575,10 @@ function OrbBriefingCard({briefings,orbPos,onClose,onOpenAssistant,onAccept,onDi
           </div>
           <button onClick={onClose} style={{padding:"4px 8px",fontSize:11,color:"#7a73a3",background:"transparent",borderRadius:6,cursor:"pointer"}}>✕</button>
         </div>
-
-        {/* Content */}
-        <div className="slim-scroll" style={{flex:1,overflowY:"auto",padding:"6px 8px 8px"}}>
-          {hasItems?(
-            briefings.slice(0,5).map((b,i)=>(
-              <BriefingItem key={b.id} brief={b} onAccept={()=>onAccept(b)} onDismiss={()=>onDismiss(b)} onMarkRead={()=>onMarkRead(b)}/>
-            ))
-          ):(
+        <div style={{flex:1,overflowY:"auto",padding:"6px 8px 8px"}}>
+          {hasItems?briefings.slice(0,5).map((b)=>(
+            <BriefingItem key={b.id} brief={b} onAccept={()=>onAccept(b)} onDismiss={()=>onDismiss(b)}/>
+          )):(
             <div style={{padding:"40px 20px",textAlign:"center",color:"#7a73a3"}}>
               <div style={{fontSize:32,marginBottom:10,opacity:0.5}}>✨</div>
               <div style={{fontSize:13,fontWeight:600,color:"#1a1530",marginBottom:4}}>暂时没有新消息</div>
@@ -5918,8 +5586,6 @@ function OrbBriefingCard({briefings,orbPos,onClose,onOpenAssistant,onAccept,onDi
             </div>
           )}
         </div>
-
-        {/* Footer */}
         <div style={{padding:"10px 14px",borderTop:"1px solid rgba(167,139,250,0.12)",display:"flex",gap:8}}>
           <button onClick={()=>{onClose();onOpenAssistant&&onOpenAssistant(briefings);}} style={{flex:1,padding:"9px 12px",background:"linear-gradient(135deg,#6d5fff,#a855f7,#ec4899)",color:"#fff",borderRadius:9,fontSize:12,fontWeight:700,letterSpacing:"0.04em",cursor:"pointer",boxShadow:"0 4px 14px rgba(109,95,255,0.3)"}}>打开 AI 助手</button>
         </div>
@@ -5928,24 +5594,19 @@ function OrbBriefingCard({briefings,orbPos,onClose,onOpenAssistant,onAccept,onDi
   );
 }
 
-// 单条 briefing 渲染
-function BriefingItem({brief,onAccept,onDismiss,onMarkRead}){
-  const senderColors={
-    coach:"#10d9a3",strategist:"#6d5fff",mentor:"#ec4899",celebrate:"#fbbf24",
-  };
+function BriefingItem({brief,onAccept,onDismiss}){
+  const senderColors={coach:"#10d9a3",strategist:"#6d5fff",mentor:"#ec4899",celebrate:"#fbbf24"};
   const sColor=senderColors[brief.sender]||"#6d5fff";
   return(
     <div style={{padding:"12px 12px",borderRadius:11,background:"rgba(244,242,255,0.5)",marginBottom:6,border:"1px solid rgba(167,139,250,0.12)"}}>
       <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
         <span style={{width:6,height:6,borderRadius:"50%",background:sColor,boxShadow:`0 0 8px ${sColor}66`}}/>
         <span className="mono" style={{fontSize:9,color:sColor,letterSpacing:"0.16em",fontWeight:700,textTransform:"uppercase"}}>{brief.title||brief.type||"消息"}</span>
-        <span style={{flex:1}}/>
-        <span className="mono" style={{fontSize:9,color:"#a8a0d6"}}>{formatTime(brief.ts)}</span>
       </div>
       <div style={{fontSize:13,color:"#1a1530",lineHeight:1.6,marginBottom:8}}>{brief.message}</div>
       <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
         {Array.isArray(brief.actions)&&brief.actions.slice(0,3).map((a,i)=>(
-          <button key={i} onClick={()=>onAccept({...brief,_action:a})} style={{padding:"5px 11px",fontSize:11,fontWeight:600,background:i===0?"linear-gradient(135deg,#6d5fff,#a855f7)":"rgba(167,139,250,0.12)",color:i===0?"#fff":"#6d5fff",borderRadius:7,cursor:"pointer",letterSpacing:"0.02em"}}>{a.label}</button>
+          <button key={i} onClick={()=>onAccept({...brief,_action:a})} style={{padding:"5px 11px",fontSize:11,fontWeight:600,background:i===0?"linear-gradient(135deg,#6d5fff,#a855f7)":"rgba(167,139,250,0.12)",color:i===0?"#fff":"#6d5fff",borderRadius:7,cursor:"pointer"}}>{a.label}</button>
         ))}
         <button onClick={onDismiss} style={{padding:"5px 11px",fontSize:11,fontWeight:500,background:"transparent",color:"#a8a0d6",borderRadius:7,cursor:"pointer",marginLeft:"auto"}}>稍后</button>
       </div>
@@ -5953,66 +5614,22 @@ function BriefingItem({brief,onAccept,onDismiss,onMarkRead}){
   );
 }
 
-// 时间格式化
-function formatTime(ts){
-  if(!ts)return"";
-  const d=new Date(ts);
-  const now=new Date();
-  const diff=now-d;
-  if(diff<60000)return"刚刚";
-  if(diff<3600000)return Math.floor(diff/60000)+" 分钟前";
-  if(diff<86400000)return d.getHours().toString().padStart(2,"0")+":"+d.getMinutes().toString().padStart(2,"0");
-  return(d.getMonth()+1)+"/"+d.getDate();
-}
-
-// ─── Briefing 操作处理 ───
 function handleBriefingAccept(brief,setBriefings,showToast){
   const action=brief._action;
   if(!action){showToast&&showToast("操作未定义","warn");return;}
-  // 标记已读 + 已采纳
-  const all=getBriefings().map(b=>b.id===brief.id?{...b,read:true,accepted:true,acceptedAt:Date.now(),acceptedAction:action.action}:b);
+  const all=getBriefings().map(b=>b.id===brief.id?{...b,read:true,accepted:true,acceptedAt:Date.now()}:b);
   setBriefingsStorage(all);
   setBriefings(all.filter(b=>!b.read&&!b.dismissed));
   recordBriefAccept(brief.type);
-  // 触发事件让外部处理 action
   window.dispatchEvent(new CustomEvent("tlk-brief-action",{detail:{brief,action}}));
   showToast&&showToast("好的，已处理 ✓","success");
 }
 
 function handleBriefingDismiss(brief,setBriefings){
-  const all=getBriefings().map(b=>b.id===brief.id?{...b,read:true,dismissed:true,dismissedAt:Date.now()}:b);
+  const all=getBriefings().map(b=>b.id===brief.id?{...b,read:true,dismissed:true}:b);
   setBriefingsStorage(all);
   setBriefings(all.filter(b=>!b.read&&!b.dismissed));
   recordBriefDismiss(brief.type);
-}
-
-function handleBriefingRead(brief,setBriefings){
-  const all=getBriefings().map(b=>b.id===brief.id?{...b,read:true}:b);
-  setBriefingsStorage(all);
-  setBriefings(all.filter(b=>!b.read&&!b.dismissed));
-}
-
-// 给 briefings 添加新条目（外部调用）
-function pushBriefing(b){
-  const newBrief={
-    id:"br_"+Date.now()+"_"+Math.floor(Math.random()*10000),
-    ts:Date.now(),
-    read:false,
-    accepted:false,
-    dismissed:false,
-    type:b.type||"general",
-    sender:b.sender||"coach",
-    title:b.title||"AI 建议",
-    message:b.message||"",
-    actions:Array.isArray(b.actions)?b.actions:[],
-    severity:b.severity||"medium",
-    expiresAt:b.expiresAt||Date.now()+7*86400000,
-    ...b,
-  };
-  const all=[...getBriefings(),newBrief];
-  setBriefingsStorage(all);
-  window.dispatchEvent(new CustomEvent("tlk-briefings-changed"));
-  return newBrief;
 }
 
 function AssistantView({th,tasks,setTasks,projects,cats,catOf,tags,journals,today,displayName,nextSortKey,showToast,emptyTask,setTrash,user}){

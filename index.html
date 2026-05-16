@@ -66,6 +66,14 @@ kbd{font-family:var(--f-mono);font-size:10px;padding:1px 5px;border-radius:3px;b
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes orbRotate{from{background-position:0% 50%}to{background-position:200% 50%}}
+@keyframes owlBlink{0%,93%,100%{transform:scaleY(1)}96%{transform:scaleY(0.1)}}
+@keyframes owlBlinkRight{0%,90%,100%{transform:scaleY(1)}93%{transform:scaleY(0.1)}}
+@keyframes owlBreath{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-4px) scale(1.015)}}
+@keyframes owlWave{0%,80%,100%{transform:rotate(0deg)}40%{transform:rotate(-15deg)}60%{transform:rotate(10deg)}}
+@keyframes owlHeart{0%{opacity:0;transform:translate(0,0) scale(0.5)}30%{opacity:1;transform:translate(2px,-8px) scale(1)}100%{opacity:0;transform:translate(6px,-30px) scale(0.7)}}
+@keyframes softFloat{0%,100%{transform:translate(0,0)}50%{transform:translate(8px,-12px)}}
+@keyframes authBtnShine{0%{transform:translateX(-100%)}50%,100%{transform:translateX(200%)}}
+@keyframes fadeInUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
 @keyframes orbBreath{0%,100%{transform:scale(1) translateY(0)}50%{transform:scale(1.05) translateY(-3px)}}
 @keyframes orbPulse{0%,100%{opacity:0.3;transform:scale(0.95)}50%{opacity:0.7;transform:scale(1.15)}}
 @keyframes orbWave{0%{transform:scale(1);opacity:0.6}100%{transform:scale(1.8);opacity:0}}
@@ -963,6 +971,25 @@ const GREETINGS=[
 function todayStr(){const d=new Date();return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}
 function dateStr(d){return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}
 function addDays(ds,n){const d=new Date(ds);d.setDate(d.getDate()+n);return dateStr(d);}
+// 判断指定日期是否落在任务周期内
+function taskCoversDate(task,date){
+  if(!task||!task.due)return false;
+  if(!task.dueEnd||task.dueEnd===task.due)return task.due===date;
+  return task.due<=date&&date<=task.dueEnd;
+}
+// 任务的"有效截止日期"：跨期任务取 dueEnd，单日任务取 due
+function taskEffectiveDue(task){
+  if(!task)return "";
+  return task.dueEnd||task.due||"";
+}
+// 任务的"跨期天数"
+function taskDuration(task){
+  if(!task||!task.due)return 0;
+  if(!task.dueEnd||task.dueEnd===task.due)return 1;
+  const d1=new Date(task.due+"T00:00:00");
+  const d2=new Date(task.dueEnd+"T00:00:00");
+  return Math.round((d2-d1)/86400000)+1;
+}
 function calcMin(s,e){try{const[sh,sm]=s.split(":").map(Number),[eh,em]=e.split(":").map(Number);const d=(eh*60+em)-(sh*60+sm);return d>0?d:null;}catch{return null;}}
 function timeToMin(t){try{const[h,m]=t.split(":").map(Number);return h*60+m;}catch{return null;}}
 function fmtMin(m){if(m==null||isNaN(m))return"";m=Math.round(m);if(m<60)return m+"min";const h=Math.floor(m/60),r=m%60;return h+"h"+(r?r+"m":"");}
@@ -1017,7 +1044,7 @@ function buildAssistantSystemPrompt(ctx){
   const{tasks=[],cats=[],projects=[],tags=[],journals=[],today=todayStr(),displayName=""}=ctx;
   const undone=tasks.filter(t=>!t.done);
   const overdue=undone.filter(t=>t.due&&t.due<today);
-  const todayList=undone.filter(t=>t.due===today);
+  const todayList=undone.filter(t=>taskCoversDate(t,today));
   const future=undone.filter(t=>t.due&&t.due>today);
   const activeProjects=projects.filter(p=>p.startDate&&p.endDate&&p.startDate<=today&&today<=p.endDate);
   const recentJournals=journals.slice(-3).map(j=>`${j.date}: ${j.wish||""}${j.mood?" "+j.mood:""}`).filter(Boolean);
@@ -1077,7 +1104,8 @@ const ASSISTANT_TOOLS=[
         type:"object",
         properties:{
           title:{type:"string",description:"任务标题"},
-          due:{type:"string",description:"截止日期 YYYY-MM-DD"},
+          due:{type:"string",description:"开始日期 YYYY-MM-DD（单日任务就是这一天，跨期任务的开始日）"},
+          dueEnd:{type:"string",description:"结束日期 YYYY-MM-DD（可选）。多日跨期任务时填写，单日任务留空。例如「下周一到周五出方案」→ due=周一日期, dueEnd=周五日期"},
           timeStart:{type:"string",description:"开始时间 HH:MM"},
           timeEnd:{type:"string",description:"结束时间 HH:MM"},
           duration:{type:"number",description:"预计分钟数"},
@@ -1100,7 +1128,8 @@ const ASSISTANT_TOOLS=[
         properties:{
           taskId:{type:"number",description:"任务 id"},
           title:{type:"string"},
-          due:{type:"string"},
+          due:{type:"string",description:"开始日期 YYYY-MM-DD"},
+          dueEnd:{type:"string",description:"结束日期 YYYY-MM-DD（跨期任务）。传空字符串可清除"},
           timeStart:{type:"string"},
           timeEnd:{type:"string"},
           duration:{type:"number"},
@@ -1158,7 +1187,7 @@ async function callAssistantWithTools(messages,handlers,onProgress){
   const validRoles=new Set(["system","user","assistant","tool"]);
   const conversation=messages.filter(m=>m&&validRoles.has(m.role));
   let rounds=0;
-  while(rounds<5){ // 最多 5 轮 tool 调用，防死循环
+  while(rounds<12){ // 最多 12 轮 tool 调用，防死循环
     rounds++;
     const{data}=await supabase.auth.getSession();
     const token=data.session?.access_token;
@@ -1923,6 +1952,10 @@ function weekdayEN(date){const d=new Date(date);return["SUN","MON","TUE","WED","
 function monthName(date){return new Date(date).toLocaleDateString("en-US",{month:"short"}).toUpperCase();}
 function isOverdue(task,nowToday,nowMins,projects){
   if(task.done)return false;
+  // 跨期任务：以 dueEnd 为准判断是否逾期
+  if(task.dueEnd&&task.dueEnd!==task.due){
+    return task.dueEnd<nowToday;
+  }
   // 优先：如果任务挂在有 endDate 的项目下，以项目 endDate 为准
   if(task.projectId&&Array.isArray(projects)){
     const proj=projects.find(p=>p.id===task.projectId);
@@ -1949,7 +1982,7 @@ function isOverdue(task,nowToday,nowMins,projects){
   }
   return false;
 }
-const emptyTask={title:"",content:"",category:"work",priority:"中",due:"",timeStart:"",timeEnd:"",duration:"",repeat:false,progress:0,projectId:"",sortKey:0,tagIds:[]};
+const emptyTask={title:"",content:"",category:"work",priority:"中",due:"",dueEnd:"",timeStart:"",timeEnd:"",duration:"",repeat:false,progress:0,projectId:"",sortKey:0,tagIds:[]};
 
 // ═══ CLOUD SYNC ═══
 async function cloudLoad(userId){try{const{data,error}=await supabase.from("user_data").select("*").eq("user_id",userId).maybeSingle();if(error)throw error;return data;}catch(e){return null;}}
@@ -2058,7 +2091,7 @@ function sanitizeImport(d){
     content:typeof t.content==="string"?t.content.slice(0,2000):"",
     category:typeof t.category==="string"?t.category:"other",
     priority:PRIORITIES.includes(t.priority)?t.priority:"中",
-    due:typeof t.due==="string"?t.due:"",timeStart:typeof t.timeStart==="string"?t.timeStart:"",
+    due:typeof t.due==="string"?t.due:"",dueEnd:typeof t.dueEnd==="string"?t.dueEnd:"",timeStart:typeof t.timeStart==="string"?t.timeStart:"",
     timeEnd:typeof t.timeEnd==="string"?t.timeEnd:"",duration:t.duration?String(t.duration):"",
     repeat:!!t.repeat,done:!!t.done,actualMin:Number(t.actualMin)||0,
     progress:Number(t.progress)||0,projectId:typeof t.projectId==="string"?t.projectId:"",
@@ -2198,11 +2231,16 @@ function AuthScreen(){
   const[mode,setMode]=useState("login");
   const[username,setUsername]=useState("");
   const[password,setPassword]=useState("");
+  const[showPwd,setShowPwd]=useState(false);
   const[loading,setLoading]=useState(false);
   const[msg,setMsg]=useState("");
+  const[focusedField,setFocusedField]=useState(null);
+  const[owlBlinkKey,setOwlBlinkKey]=useState(0);
+  const[showHeart,setShowHeart]=useState(false);
   const usernameValid=username.trim().length>=2;
   const passwordValid=password.length>=6;
   const canSubmit=usernameValid&&passwordValid&&!loading;
+
   const submit=async(e)=>{
     if(e)e.preventDefault();if(!canSubmit)return;
     setLoading(true);setMsg("");
@@ -2220,131 +2258,219 @@ function AuthScreen(){
     }catch(err){setMsg("err:"+(err.message||"操作失败"));}
     setLoading(false);
   };
-  
-  // 鼠标视差光效
-  const[parallax,setParallax]=useState({x:50,y:50});
-  const onMouse=(e)=>{
-    const rect=e.currentTarget.getBoundingClientRect();
-    setParallax({
-      x:((e.clientX-rect.left)/rect.width)*100,
-      y:((e.clientY-rect.top)/rect.height)*100,
-    });
+
+  // 点击 IP 互动
+  const tapOwl=()=>{
+    setOwlBlinkKey(k=>k+1);
+    setShowHeart(true);
+    setTimeout(()=>setShowHeart(false),900);
   };
   
-  const inpS={
-    width:"100%",
-    padding:"15px 18px",
-    border:"1.5px solid rgba(20,18,38,0.08)",
-    borderRadius:13,
-    fontSize:14.5,
-    outline:"none",
-    background:"rgba(255,255,255,0.7)",
-    color:"#1a1530",
-    transition:"all 0.2s var(--ease)",
-    letterSpacing:"0.01em",
-    fontFamily:"inherit",
-    backdropFilter:"blur(8px)",
-    WebkitBackdropFilter:"blur(8px)",
-  };
-  
+  // 密码模式时遮眼
+  const isCovering=focusedField==="pwd"&&!showPwd;
+
   return(
-    <div onMouseMove={onMouse} style={{minHeight:"100vh",background:"linear-gradient(180deg,#fafaff 0%,#f4f0ff 50%,#fff5f9 100%)",display:"flex",alignItems:"center",justifyContent:"center",padding:20,position:"relative",color:"#1a1530",overflow:"hidden",fontFamily:"inherit"}}>
-      {/* 鼠标视差光团（柔和） */}
-      <div style={{position:"absolute",inset:0,background:`radial-gradient(circle at ${parallax.x}% ${parallax.y}%, rgba(109,95,255,0.16), transparent 50%), radial-gradient(circle at ${100-parallax.x}% ${100-parallax.y}%, rgba(236,72,153,0.13), transparent 55%), radial-gradient(circle at 80% 20%, rgba(34,211,238,0.1), transparent 50%)`,transition:"background 0.4s ease",pointerEvents:"none"}}/>
+    <div style={{minHeight:"100vh",background:"linear-gradient(180deg,#fafaff 0%,#f5f0ff 45%,#fef0f6 100%)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"40px 20px",position:"relative",color:"#1a1530",overflow:"hidden",fontFamily:"inherit"}}>
       
-      {/* 漂浮光球 1 - 紫 */}
-      <div style={{position:"absolute",top:"-10%",right:"-10%",width:520,height:520,borderRadius:"50%",background:"radial-gradient(circle,rgba(109,95,255,0.3),transparent 65%)",filter:"blur(70px)",animation:"orbDrift 18s ease-in-out infinite",pointerEvents:"none"}}/>
-      {/* 漂浮光球 2 - 粉 */}
-      <div style={{position:"absolute",bottom:"-15%",left:"-10%",width:600,height:600,borderRadius:"50%",background:"radial-gradient(circle,rgba(236,72,153,0.22),transparent 70%)",filter:"blur(80px)",animation:"orbDrift2 22s ease-in-out infinite",pointerEvents:"none"}}/>
-      {/* 漂浮光球 3 - 青 */}
-      <div style={{position:"absolute",top:"40%",left:"30%",width:340,height:340,borderRadius:"50%",background:"radial-gradient(circle,rgba(34,211,238,0.18),transparent 65%)",filter:"blur(65px)",animation:"orbDrift3 28s ease-in-out infinite",pointerEvents:"none"}}/>
-      
-      {/* 装饰性顶部细线 */}
-      <div style={{position:"absolute",top:0,left:0,right:0,height:1,background:"linear-gradient(90deg,transparent,rgba(109,95,255,0.4),rgba(236,72,153,0.4),transparent)",pointerEvents:"none"}}/>
+      {/* 极轻装饰背景：3 个柔和光斑 */}
+      <div style={{position:"absolute",top:"15%",left:"12%",width:300,height:300,borderRadius:"50%",background:"radial-gradient(circle,rgba(167,139,250,0.25),transparent 70%)",filter:"blur(60px)",animation:"softFloat 14s ease-in-out infinite",pointerEvents:"none"}}/>
+      <div style={{position:"absolute",top:"55%",right:"10%",width:340,height:340,borderRadius:"50%",background:"radial-gradient(circle,rgba(244,114,182,0.18),transparent 70%)",filter:"blur(70px)",animation:"softFloat 18s ease-in-out infinite -5s",pointerEvents:"none"}}/>
+      <div style={{position:"absolute",bottom:"10%",left:"30%",width:260,height:260,borderRadius:"50%",background:"radial-gradient(circle,rgba(34,211,238,0.15),transparent 70%)",filter:"blur(55px)",animation:"softFloat 22s ease-in-out infinite -8s",pointerEvents:"none"}}/>
 
-      <div style={{width:"100%",maxWidth:440,position:"relative",zIndex:10}}>
-        {/* Logo + 标题 */}
-        <div style={{textAlign:"center",marginBottom:42,animation:"fadeInUp 0.8s var(--ease)"}}>
-          {/* 小图标 */}
-          <div style={{display:"inline-flex",alignItems:"center",gap:10,padding:"6px 14px",borderRadius:30,background:"rgba(255,255,255,0.7)",border:"1px solid rgba(109,95,255,0.2)",marginBottom:24,backdropFilter:"blur(10px)",boxShadow:"0 2px 12px rgba(109,95,255,0.08)"}}>
-            <span style={{width:6,height:6,borderRadius:"50%",background:"#6d5fff",boxShadow:"0 0 10px #6d5fff",animation:"pulseGlow 2s infinite"}}/>
-            <span className="mono" style={{fontSize:11,color:"#6d5fff",letterSpacing:"0.18em",fontWeight:600}}>YOUR PERSONAL AI WORKSPACE</span>
-          </div>
-          {/* 主标题 */}
-          <h1 className="display" style={{fontSize:78,letterSpacing:"-0.05em",lineHeight:1,marginBottom:18,whiteSpace:"nowrap",fontWeight:700,position:"relative"}}>
-            <span style={{color:"#1a1530"}}>Time</span>
-            <em style={{fontStyle:"italic",fontWeight:400,background:"linear-gradient(135deg,#6d5fff 0%,#ec4899 50%,#22d3ee 100%)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",backgroundClip:"text",paddingRight:"0.06em",animation:"shimmerGrad 6s ease-in-out infinite",backgroundSize:"200% auto"}}>linek</em>
-          </h1>
-          <p style={{fontSize:14,color:"#6b6390",letterSpacing:"0.16em",fontWeight:400}}>专注当下 <span style={{margin:"0 8px",opacity:.4}}>·</span> 规划未来</p>
+      {/* 顶部 Logo */}
+      <div style={{textAlign:"center",marginBottom:18,animation:"fadeInUp 0.7s var(--ease)"}}>
+        <div className="display" style={{fontSize:34,letterSpacing:"-0.04em",lineHeight:1,fontWeight:700,whiteSpace:"nowrap"}}>
+          <span style={{color:"#1a1530"}}>Time</span>
+          <em style={{fontStyle:"italic",fontWeight:400,background:"linear-gradient(135deg,#6d5fff,#ec4899)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",backgroundClip:"text",paddingRight:"0.06em"}}>linek</em>
         </div>
+      </div>
 
-        {/* 表单卡片 - 浅白玻璃 */}
-        <div style={{borderRadius:22,padding:"34px 32px 28px",position:"relative",background:"rgba(255,255,255,0.75)",border:"1px solid rgba(109,95,255,0.1)",boxShadow:"0 1px 0 rgba(255,255,255,0.8) inset, 0 24px 64px rgba(109,95,255,0.12), 0 1px 4px rgba(0,0,0,0.04)",backdropFilter:"blur(24px) saturate(180%)",WebkitBackdropFilter:"blur(24px) saturate(180%)",animation:"fadeInUp 0.9s 0.15s var(--ease) backwards"}}>
-          {/* 卡片顶部彩边 */}
-          <div style={{position:"absolute",top:0,left:24,right:24,height:1,background:"linear-gradient(90deg,transparent,rgba(109,95,255,0.5),rgba(236,72,153,0.5),transparent)",pointerEvents:"none"}}/>
+      {/* IP 角色：时光猫头鹰 Linek */}
+      <div style={{position:"relative",marginBottom:8,animation:"owlBreath 4s ease-in-out infinite",cursor:"pointer",zIndex:10}} onClick={tapOwl}>
+        <svg width="200" height="200" viewBox="0 0 200 200" style={{display:"block",filter:"drop-shadow(0 20px 40px rgba(109,95,255,0.15))"}}>
+          <defs>
+            <linearGradient id="owlBody" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stopColor="#a78bfa"/>
+              <stop offset="100%" stopColor="#8b5cf6"/>
+            </linearGradient>
+            <linearGradient id="owlBelly" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stopColor="#fef3f8"/>
+              <stop offset="100%" stopColor="#fce7f3"/>
+            </linearGradient>
+            <radialGradient id="owlCheek">
+              <stop offset="0%" stopColor="#fda4af" stopOpacity="0.85"/>
+              <stop offset="100%" stopColor="#fda4af" stopOpacity="0"/>
+            </radialGradient>
+          </defs>
           
-          <h2 className="display" style={{fontSize:26,color:"#1a1530",marginBottom:6,letterSpacing:"-0.02em",fontWeight:700,lineHeight:1.2}}>
-            {mode==="login"?<>欢迎<em style={{fontStyle:"italic",fontWeight:400,background:"linear-gradient(135deg,#6d5fff,#ec4899)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",backgroundClip:"text"}}>回来</em></>:<>开启<em style={{fontStyle:"italic",fontWeight:400,background:"linear-gradient(135deg,#6d5fff,#ec4899)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",backgroundClip:"text"}}>新篇</em></>}
-          </h2>
-          <p style={{fontSize:13,color:"#7a73a3",marginBottom:24,letterSpacing:"0.02em"}}>
-            {mode==="login"?"登录账户继续你的规划":"创建账户开始全新体验"}
-          </p>
+          {/* 阴影 */}
+          <ellipse cx="100" cy="178" rx="44" ry="6" fill="rgba(109,95,255,0.18)"/>
+          
+          {/* 脚 */}
+          <path d="M82 160 Q80 168 76 172 L74 174" stroke="#f97316" strokeWidth="3.5" strokeLinecap="round" fill="none"/>
+          <path d="M82 160 Q86 168 84 174" stroke="#f97316" strokeWidth="3.5" strokeLinecap="round" fill="none"/>
+          <path d="M118 160 Q120 168 124 172 L126 174" stroke="#f97316" strokeWidth="3.5" strokeLinecap="round" fill="none"/>
+          <path d="M118 160 Q114 168 116 174" stroke="#f97316" strokeWidth="3.5" strokeLinecap="round" fill="none"/>
 
-          <form onSubmit={submit}>
-            <div style={{marginBottom:14,position:"relative"}}>
-              <div style={{position:"absolute",left:15,top:"50%",transform:"translateY(-50%)",pointerEvents:"none",opacity:.55,zIndex:1}}>
-                <Ic n="user" size={15} color="#7a73a3"/>
-              </div>
-              <input value={username} onChange={e=>setUsername(e.target.value)} type="text" placeholder="账户名（至少 2 个字符）" autoComplete="username" maxLength={32} style={{...inpS,paddingLeft:42}} onFocus={e=>{e.target.style.borderColor="rgba(109,95,255,0.55)";e.target.style.boxShadow="0 0 0 4px rgba(109,95,255,0.1),0 4px 16px rgba(109,95,255,0.12)";e.target.style.background="rgba(255,255,255,0.95)";}} onBlur={e=>{e.target.style.borderColor="rgba(20,18,38,0.08)";e.target.style.boxShadow="none";e.target.style.background="rgba(255,255,255,0.7)";}}/>
-              <div style={{minHeight:18,marginTop:6,paddingLeft:4}}>
-                {mode==="signup"&&username.length>0&&!usernameValid&&<div style={{fontSize:11.5,color:"#e11d48",letterSpacing:"0.02em"}}>账户名至少 2 个字符</div>}
-              </div>
-            </div>
-            <div style={{marginBottom:18,position:"relative"}}>
-              <div style={{position:"absolute",left:15,top:"50%",transform:"translateY(-50%)",pointerEvents:"none",opacity:.55,zIndex:1}}>
-                <Ic n="settings" size={15} color="#7a73a3"/>
-              </div>
-              <input value={password} onChange={e=>setPassword(e.target.value)} type="password" placeholder="密码（至少 6 位）" autoComplete={mode==="login"?"current-password":"new-password"} style={{...inpS,paddingLeft:42}} onFocus={e=>{e.target.style.borderColor="rgba(109,95,255,0.55)";e.target.style.boxShadow="0 0 0 4px rgba(109,95,255,0.1),0 4px 16px rgba(109,95,255,0.12)";e.target.style.background="rgba(255,255,255,0.95)";}} onBlur={e=>{e.target.style.borderColor="rgba(20,18,38,0.08)";e.target.style.boxShadow="none";e.target.style.background="rgba(255,255,255,0.7)";}}/>
-              <div style={{minHeight:18,marginTop:6,paddingLeft:4}}>
-                {mode==="signup"&&password.length>0&&!passwordValid&&<div style={{fontSize:11.5,color:"#e11d48",letterSpacing:"0.02em"}}>密码至少 6 位</div>}
-              </div>
-            </div>
-            <button type="submit" disabled={!canSubmit} style={{width:"100%",padding:"15px",background:canSubmit?"linear-gradient(135deg,#6d5fff 0%,#9333ea 50%,#ec4899 100%)":"rgba(109,95,255,0.08)",color:canSubmit?"#fff":"#a8a0d6",borderRadius:12,fontSize:14.5,fontWeight:700,letterSpacing:"0.06em",transition:"all 0.25s var(--ease)",boxShadow:canSubmit?"0 8px 24px rgba(109,95,255,0.35),0 1px 0 rgba(255,255,255,0.2) inset":"none",cursor:canSubmit?"pointer":"not-allowed",position:"relative",overflow:"hidden",backgroundSize:"200% auto"}} onMouseEnter={e=>{if(canSubmit)e.target.style.backgroundPosition="right center";}} onMouseLeave={e=>{if(canSubmit)e.target.style.backgroundPosition="left center";}}>
-              {loading?<span className="spin" style={{display:"inline-block"}}>○</span>:mode==="login"?"登 录":"创 建 账 户"}
-            </button>
-          </form>
-          {/* 切换登录/注册 - 在按钮下方 */}
-          <div style={{marginTop:14,textAlign:"center",fontSize:13,color:"#7a73a3",letterSpacing:"0.02em"}}>
-            {mode==="login"?"还没有账户？":"已经有账户？"}
-            <button type="button" onClick={()=>{setMode(mode==="login"?"signup":"login");setMsg("");}} style={{padding:"4px 8px",fontSize:13,fontWeight:700,background:"linear-gradient(135deg,#6d5fff,#ec4899)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",backgroundClip:"text",letterSpacing:"0.02em"}}>{mode==="login"?"立即注册 →":"← 返回登录"}</button>
-          </div>
-          {msg&&<div className="fadeIn" style={{marginTop:14,padding:"11px 15px",background:msg.startsWith("err")?"rgba(225,29,72,0.06)":"rgba(34,197,94,0.08)",color:msg.startsWith("err")?"#e11d48":"#16a34a",fontSize:12.5,borderRadius:10,lineHeight:1.55,border:`1px solid ${msg.startsWith("err")?"rgba(225,29,72,0.18)":"rgba(34,197,94,0.2)"}`,letterSpacing:"0.01em"}}>{msg.slice(4)}</div>}
+          {/* 身体 */}
+          <ellipse cx="100" cy="115" rx="55" ry="58" fill="url(#owlBody)"/>
           
-          {/* 隐私保障 - 简化提示 */}
-          <div style={{marginTop:22,paddingTop:18,borderTop:"1px solid rgba(109,95,255,0.08)",display:"flex",alignItems:"center",justifyContent:"center",gap:14,fontSize:11,color:"#a8a0d6",letterSpacing:"0.04em"}}>
-            <span style={{display:"flex",alignItems:"center",gap:5}}>
-              <span style={{width:5,height:5,borderRadius:"50%",background:"#22d3ee"}}/>
-              数据加密
-            </span>
-            <span style={{opacity:.4}}>·</span>
-            <span style={{display:"flex",alignItems:"center",gap:5}}>
-              <span style={{width:5,height:5,borderRadius:"50%",background:"#a78bfa"}}/>
-              云端同步
-            </span>
-            <span style={{opacity:.4}}>·</span>
-            <span style={{display:"flex",alignItems:"center",gap:5}}>
-              <span style={{width:5,height:5,borderRadius:"50%",background:"#ec4899"}}/>
-              多端互通
-            </span>
-          </div>
-        </div>
+          {/* 肚皮 */}
+          <ellipse cx="100" cy="125" rx="34" ry="40" fill="url(#owlBelly)"/>
+          
+          {/* 翅膀 */}
+          <path d="M50 110 Q40 130 48 150 Q55 158 62 152 Q60 130 60 115 Z" fill="#7c3aed" opacity="0.6"/>
+          <path d="M150 110 Q160 130 152 150 Q145 158 138 152 Q140 130 140 115 Z" fill="#7c3aed" opacity="0.6" style={{transformOrigin:"148px 130px",animation:showHeart?"owlWave 0.9s ease":"none"}}/>
+          
+          {/* 头部装饰：耳朵簇 */}
+          <path d="M65 65 L60 50 L72 60 Z" fill="#7c3aed"/>
+          <path d="M135 65 L140 50 L128 60 Z" fill="#7c3aed"/>
+          
+          {/* 脸（面盘）*/}
+          <ellipse cx="100" cy="88" rx="48" ry="44" fill="#f8f5ff"/>
+          
+          {/* 眼睛背景圆（白色）*/}
+          <circle cx="80" cy="85" r="16" fill="#fff" stroke="#e9d5ff" strokeWidth="1.5"/>
+          <circle cx="120" cy="85" r="16" fill="#fff" stroke="#e9d5ff" strokeWidth="1.5"/>
+          
+          {/* 眼睛瞳孔 */}
+          {isCovering?(
+            <>
+              <path d="M68 87 Q80 80 92 87" stroke="#1a1530" strokeWidth="3" fill="none" strokeLinecap="round"/>
+              <path d="M108 87 Q120 80 132 87" stroke="#1a1530" strokeWidth="3" fill="none" strokeLinecap="round"/>
+            </>
+          ):(
+            <>
+              <g key={`l-${owlBlinkKey}`} style={{transformOrigin:"80px 85px",animation:"owlBlink 5s ease-in-out infinite"}}>
+                <circle cx="80" cy="86" r="7.5" fill="#1a1530"/>
+                <circle cx="82.5" cy="83" r="2.5" fill="#fff"/>
+                <circle cx="78" cy="89" r="1.2" fill="#fff" opacity="0.7"/>
+              </g>
+              <g key={`r-${owlBlinkKey}`} style={{transformOrigin:"120px 85px",animation:"owlBlinkRight 5s ease-in-out infinite -2s"}}>
+                <circle cx="120" cy="86" r="7.5" fill="#1a1530"/>
+                <circle cx="122.5" cy="83" r="2.5" fill="#fff"/>
+                <circle cx="118" cy="89" r="1.2" fill="#fff" opacity="0.7"/>
+              </g>
+            </>
+          )}
+          
+          {/* 眉毛（focus 时挑眉）*/}
+          {focusedField&&(
+            <>
+              <path d="M68 70 Q76 66 90 70" stroke="#7c3aed" strokeWidth="2" fill="none" strokeLinecap="round" opacity="0.7"/>
+              <path d="M110 70 Q124 66 132 70" stroke="#7c3aed" strokeWidth="2" fill="none" strokeLinecap="round" opacity="0.7"/>
+            </>
+          )}
+          
+          {/* 喙 */}
+          <path d="M96 100 L100 110 L104 100 Z" fill="#f97316"/>
+          <path d="M96 100 L100 108 L104 100" fill="#ea580c"/>
+          
+          {/* 红晕脸蛋 */}
+          <circle cx="68" cy="103" r="10" fill="url(#owlCheek)"/>
+          <circle cx="132" cy="103" r="10" fill="url(#owlCheek)"/>
+          
+          {/* 头顶呆毛 */}
+          <path d="M100 38 Q102 30 100 24 Q98 30 100 38" fill="#7c3aed"/>
+        </svg>
         
-        {/* 底部 footer */}
-        <div style={{textAlign:"center",marginTop:24,fontSize:11,color:"#a8a0d6",letterSpacing:"0.06em",animation:"fadeInUp 1s 0.3s var(--ease) backwards"}}>
-          <span className="mono">© Timelinek 2026</span>
-          <span style={{margin:"0 8px",opacity:.3}}>·</span>
-          <span>Made for focused minds</span>
+        {/* 点击爱心特效 */}
+        {showHeart&&(
+          <div style={{position:"absolute",top:"40%",right:"-10px",fontSize:18,animation:"owlHeart 0.9s ease",pointerEvents:"none"}}>💜</div>
+        )}
+      </div>
+
+      {/* IP 名称 + 招呼语 */}
+      <div style={{textAlign:"center",marginBottom:32,animation:"fadeInUp 0.8s 0.15s var(--ease) backwards"}}>
+        <div style={{fontSize:18,color:"#1a1530",fontWeight:600,letterSpacing:"-0.01em",marginBottom:4}}>
+          {mode==="login"?(focusedField?"专注模式 ✨":"嗨，我是 Linek"):"很高兴认识你！"}
         </div>
+        <div className="mono" style={{fontSize:11,color:"#7a73a3",letterSpacing:"0.16em"}}>
+          {mode==="login"?"YOUR PERSONAL AI WORKSPACE":"LET'S START YOUR JOURNEY"}
+        </div>
+      </div>
+
+      {/* 极简输入区 */}
+      <form onSubmit={submit} style={{width:"100%",maxWidth:360,position:"relative",zIndex:5,animation:"fadeInUp 0.9s 0.3s var(--ease) backwards"}}>
+        
+        {/* 账户名 */}
+        <div style={{marginBottom:22,position:"relative"}}>
+          <input
+            value={username} onChange={e=>setUsername(e.target.value)}
+            type="text" placeholder="账户名" autoComplete="username" maxLength={32}
+            onFocus={()=>setFocusedField("user")} onBlur={()=>setFocusedField(null)}
+            style={{width:"100%",padding:"12px 0",border:"none",borderBottom:`1.5px solid ${focusedField==="user"?"transparent":"rgba(109,95,255,0.25)"}`,background:"transparent",fontSize:17,color:"#1a1530",outline:"none",fontFamily:"inherit",letterSpacing:"0.01em",transition:"all 0.25s var(--ease)",textAlign:"center",caretColor:"#6d5fff"}}
+          />
+          <div style={{position:"absolute",left:0,right:0,bottom:0,height:1.5,background:"linear-gradient(90deg,#6d5fff,#ec4899,#22d3ee)",transform:focusedField==="user"?"scaleX(1)":"scaleX(0)",transformOrigin:"center",transition:"transform 0.35s var(--ease)",borderRadius:1,pointerEvents:"none"}}/>
+        </div>
+
+        {/* 密码 */}
+        <div style={{marginBottom:30,position:"relative"}}>
+          <input
+            value={password} onChange={e=>setPassword(e.target.value)}
+            type={showPwd?"text":"password"} placeholder="密码"
+            autoComplete={mode==="login"?"current-password":"new-password"}
+            onFocus={()=>setFocusedField("pwd")} onBlur={()=>setFocusedField(null)}
+            style={{width:"100%",padding:"12px 32px 12px 0",border:"none",borderBottom:`1.5px solid ${focusedField==="pwd"?"transparent":"rgba(109,95,255,0.25)"}`,background:"transparent",fontSize:17,color:"#1a1530",outline:"none",fontFamily:"inherit",letterSpacing:showPwd?"0.01em":"0.15em",transition:"all 0.25s var(--ease)",textAlign:"center",caretColor:"#6d5fff"}}
+          />
+          {password&&(
+            <button type="button" onClick={()=>setShowPwd(!showPwd)} tabIndex={-1} style={{position:"absolute",right:0,top:13,padding:4,background:"transparent",opacity:0.4,cursor:"pointer",transition:"opacity 0.2s",zIndex:2}} onMouseEnter={e=>e.currentTarget.style.opacity=0.8} onMouseLeave={e=>e.currentTarget.style.opacity=0.4}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7a73a3" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                {showPwd?<><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></>:<><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></>}
+              </svg>
+            </button>
+          )}
+          <div style={{position:"absolute",left:0,right:0,bottom:0,height:1.5,background:"linear-gradient(90deg,#6d5fff,#ec4899,#22d3ee)",transform:focusedField==="pwd"?"scaleX(1)":"scaleX(0)",transformOrigin:"center",transition:"transform 0.35s var(--ease)",borderRadius:1,pointerEvents:"none"}}/>
+        </div>
+
+        {/* 提交按钮 */}
+        <button type="submit" disabled={!canSubmit}
+          style={{width:"100%",padding:"15px",background:canSubmit?"linear-gradient(135deg,#6d5fff 0%,#a855f7 50%,#ec4899 100%)":"rgba(167,139,250,0.15)",color:canSubmit?"#fff":"#a8a0d6",borderRadius:30,fontSize:14.5,fontWeight:700,letterSpacing:"0.14em",transition:"all 0.3s var(--ease)",boxShadow:canSubmit?"0 10px 30px rgba(109,95,255,0.35),0 2px 0 rgba(255,255,255,0.25) inset":"none",cursor:canSubmit?"pointer":"not-allowed",position:"relative",overflow:"hidden",backgroundSize:"200% auto"}}
+          onMouseEnter={e=>{if(canSubmit){e.currentTarget.style.transform="translateY(-2px)";e.currentTarget.style.boxShadow="0 14px 36px rgba(109,95,255,0.4),0 2px 0 rgba(255,255,255,0.3) inset";e.currentTarget.style.backgroundPosition="right center";}}}
+          onMouseLeave={e=>{if(canSubmit){e.currentTarget.style.transform="translateY(0)";e.currentTarget.style.boxShadow="0 10px 30px rgba(109,95,255,0.35),0 2px 0 rgba(255,255,255,0.25) inset";e.currentTarget.style.backgroundPosition="left center";}}}
+        >
+          {canSubmit&&!loading&&<span style={{position:"absolute",top:0,left:0,bottom:0,width:"30%",background:"linear-gradient(90deg,transparent,rgba(255,255,255,0.35),transparent)",animation:"authBtnShine 3s ease-in-out infinite",pointerEvents:"none"}}/>}
+          <span style={{position:"relative",zIndex:1}}>
+            {loading?<span className="spin" style={{display:"inline-block",fontSize:18}}>○</span>:mode==="login"?"登 录":"加 入 我 们"}
+          </span>
+        </button>
+
+        {/* 切换 */}
+        <div style={{marginTop:18,textAlign:"center"}}>
+          <button type="button" onClick={()=>{setMode(mode==="login"?"signup":"login");setMsg("");setUsername("");setPassword("");}} style={{padding:"6px 14px",fontSize:13,color:"#7a73a3",letterSpacing:"0.04em",background:"transparent",cursor:"pointer"}}>
+            {mode==="login"?"还没有账户？":"已经有账户？"}
+            <span style={{marginLeft:6,fontWeight:700,background:"linear-gradient(135deg,#6d5fff,#ec4899)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",backgroundClip:"text"}}>{mode==="login"?"立即注册 →":"← 返回登录"}</span>
+          </button>
+        </div>
+
+        {msg&&<div className="fadeIn" style={{marginTop:14,padding:"10px 14px",background:msg.startsWith("err")?"rgba(225,29,72,0.08)":"rgba(34,197,94,0.1)",color:msg.startsWith("err")?"#e11d48":"#16a34a",fontSize:12.5,borderRadius:10,lineHeight:1.55,border:`1px solid ${msg.startsWith("err")?"rgba(225,29,72,0.2)":"rgba(34,197,94,0.22)"}`,textAlign:"center"}}>{msg.slice(4)}</div>}
+        
+        {mode==="signup"&&(username.length>0||password.length>0)&&(
+          <div style={{marginTop:14,textAlign:"center",fontSize:11,color:"#a8a0d6",letterSpacing:"0.04em"}}>
+            {!usernameValid&&username.length>0&&<span style={{marginRight:10}}>账户名至少 2 字</span>}
+            {!passwordValid&&password.length>0&&<span>密码至少 6 位</span>}
+          </div>
+        )}
+      </form>
+
+      {/* 底部信任标识 */}
+      <div style={{marginTop:36,display:"flex",alignItems:"center",justifyContent:"center",gap:18,fontSize:10.5,color:"#a8a0d6",letterSpacing:"0.08em",animation:"fadeInUp 1s 0.5s var(--ease) backwards"}}>
+        <span style={{display:"flex",alignItems:"center",gap:5}}>
+          <span style={{width:4,height:4,borderRadius:"50%",background:"#22d3ee",boxShadow:"0 0 6px rgba(34,211,238,0.6)"}}/>
+          数据加密
+        </span>
+        <span style={{display:"flex",alignItems:"center",gap:5}}>
+          <span style={{width:4,height:4,borderRadius:"50%",background:"#a78bfa",boxShadow:"0 0 6px rgba(167,139,250,0.6)"}}/>
+          云端同步
+        </span>
+        <span style={{display:"flex",alignItems:"center",gap:5}}>
+          <span style={{width:4,height:4,borderRadius:"50%",background:"#ec4899",boxShadow:"0 0 6px rgba(236,72,153,0.6)"}}/>
+          多端互通
+        </span>
+      </div>
+      
+      <div style={{position:"absolute",bottom:16,left:0,right:0,textAlign:"center",fontSize:10,color:"#c8c0e0",letterSpacing:"0.08em"}}>
+        <span className="mono">© Timelinek 2026 · Made for focused minds</span>
       </div>
     </div>
   );
@@ -3238,7 +3364,7 @@ function MainApp({user}){
     setUndo(null);showToast("已恢复","info");
   };
   const startEdit=task=>{
-    setTaskForm({title:task.title,content:task.content||"",category:task.category,priority:task.priority,due:task.due||"",timeStart:task.timeStart||"",timeEnd:task.timeEnd||"",duration:task.duration||"",repeat:!!task.repeat,progress:task.progress||0,projectId:task.projectId||""});
+    setTaskForm({title:task.title,content:task.content||"",category:task.category,priority:task.priority,due:task.due||"",dueEnd:task.dueEnd||"",timeStart:task.timeStart||"",timeEnd:task.timeEnd||"",duration:task.duration||"",repeat:!!task.repeat,progress:task.progress||0,projectId:task.projectId||""});
     setEditTaskId(task.id);setShowTaskForm(true);
   };
   const cancelForm=()=>{setShowTaskForm(false);setEditTaskId(null);setTaskForm(emptyTask);};
@@ -3353,12 +3479,12 @@ function MainApp({user}){
     return dates;
   },[schedGroups,schedFilter,today]);
 
-  const todayTasks=tasks.filter(t=>t.due===today);
+  const todayTasks=tasks.filter(t=>taskCoversDate(t,today));
   const todayTotal=todayTasks.length;
   const todayDone=todayTasks.filter(t=>t.done).length;
   // 「今日 + 逾期」统计（HeroHeader / MobileHeader / AI 上下文使用）
   // 不再用全量 tasks.length（那会把所有未完成的未来任务也算进来，影响 AI 分析和复盘）
-  const todayAndOverdue=tasks.filter(t=>t.due===today||(t.due&&t.due<today&&!t.done));
+  const todayAndOverdue=tasks.filter(t=>taskCoversDate(t,today)||(t.due&&t.due<today&&!t.done&&(!t.dueEnd||t.dueEnd<today)));
   const totalAll=todayAndOverdue.length;
   const doneAll=todayAndOverdue.filter(t=>t.done).length;
   const overdueCount=tasks.filter(t=>isOverdue(t,today,nowMin,projects)).length;
@@ -3499,7 +3625,7 @@ function SideNav({th,view,setView,projects,catOf,tasks,today,setShowSettings,set
     {id:"journal",t:"一句日记",ic:"book"},
     {id:"review",t:"复盘",ic:"star"},
   ];
-  const todayCount=tasks.filter(t=>t.due===today&&!t.done).length;
+  const todayCount=tasks.filter(t=>taskCoversDate(t,today)&&!t.done).length;
   return(
     <aside className="slim-scroll" style={{position:"sticky",top:0,height:"100vh",padding:"16px 14px",borderRight:`1px solid ${th.glassBorder}`,display:"flex",flexDirection:"column",gap:4,overflowY:"auto",background:th.isDark?"rgba(13,11,26,0.35)":"rgba(255,255,255,0.3)",backdropFilter:"blur(10px)",WebkitBackdropFilter:"blur(10px)"}}>
       {/* Logo */}
@@ -5413,6 +5539,25 @@ function pushBriefing(b){
 // AI 光球伴侣
 // ═══════════════════════════════════════════════════════════════════
 // 解析项目名→ID（支持模糊匹配 + ID 直传）
+// ─── 共享聊天历史 helpers（光球和 AI 助手共用一份存储）───
+const CHAT_HISTORY_KEY="tlk_chat_v1";
+
+function getChatHistory(){
+  try{const r=localStorage.getItem(CHAT_HISTORY_KEY);return r?JSON.parse(r):[];}catch{return[];}
+}
+
+function appendToChatHistory(msg){
+  try{
+    const all=getChatHistory();
+    all.push(msg);
+    // 限制最多保留 500 条
+    const sliced=all.slice(-500);
+    localStorage.setItem(CHAT_HISTORY_KEY,JSON.stringify(sliced));
+    // 派发事件让 AssistantView 实时刷新
+    window.dispatchEvent(new CustomEvent("tlk-chat-changed",{detail:{msg}}));
+  }catch(e){console.warn("[chat history] save failed",e);}
+}
+
 function resolveProjectIdForVoice(input,projects){
   if(!input)return "";
   if(!Array.isArray(projects))return input;
@@ -5465,17 +5610,19 @@ function throttleMove(fn,wait){
 function FloatingOrb({tasks,setTasks,projects,cats,catOf,tags,journals,history,today,displayName,nextSortKey,emptyTask,setTrash,onOpenAssistant,showToast,user}){
   const[cfg,setCfg]=useState(()=>getCompanionConfig());
   const[briefings,setBriefings]=useState(()=>getBriefings().filter(b=>!b.read&&!b.dismissed));
-  const[expanded,setExpanded]=useState(false);
   const[pos,setPos]=useState({x:typeof window!=="undefined"?window.innerWidth-100:1000,y:typeof window!=="undefined"?window.innerHeight-120:600});
-  const[state,setState]=useState("idle");
+  const[state,setState]=useState("idle"); // idle/excited/shy/listening/thinking/speaking
   const[caption,setCaption]=useState("");
   const speakCtrlRef=useRef(null);
   const wanderTimerRef=useRef(null);
   const isDraggingRef=useRef(false);
   const dragStartRef=useRef(null);
-
+  const longPressTimerRef=useRef(null);
+  
+  // ─── 漫游 ───
   useEffect(()=>{
-    if(!cfg.enabled||cfg.wanderMode!=="wander"||expanded)return;
+    if(!cfg.enabled||cfg.wanderMode!=="wander")return;
+    if(state!=="idle")return;
     const moveNext=()=>{
       if(document.hidden||isDraggingRef.current)return scheduleNext();
       const slots=calcSafeSlots();
@@ -5498,10 +5645,11 @@ function FloatingOrb({tasks,setTasks,projects,cats,catOf,tags,journals,history,t
     };
     scheduleNext();
     return()=>{if(wanderTimerRef.current)clearTimeout(wanderTimerRef.current);};
-  },[cfg.enabled,cfg.wanderMode,expanded,pos.x,pos.y]);
+  },[cfg.enabled,cfg.wanderMode,state,pos.x,pos.y]);
 
+  // ─── 鼠标害羞 ───
   useEffect(()=>{
-    if(!cfg.enabled||expanded)return;
+    if(!cfg.enabled||state!=="idle")return;
     const onMove=(e)=>{
       const dist=Math.hypot(e.clientX-pos.x,e.clientY-pos.y);
       if(dist<100&&!isDraggingRef.current){
@@ -5514,32 +5662,24 @@ function FloatingOrb({tasks,setTasks,projects,cats,catOf,tags,journals,history,t
     const throttled=throttleMove(onMove,80);
     window.addEventListener("mousemove",throttled);
     return()=>window.removeEventListener("mousemove",throttled);
-  },[cfg.enabled,pos.x,pos.y,expanded]);
+  },[cfg.enabled,pos.x,pos.y,state]);
 
   useEffect(()=>{
     if(state==="shy"){const t=setTimeout(()=>setState("idle"),1200);return()=>clearTimeout(t);}
   },[state]);
 
+  // ─── 监听 briefings ───
   useEffect(()=>{
     const update=()=>{
       const fresh=getBriefings().filter(b=>!b.read&&!b.dismissed);
-      setBriefings(prev=>{
-        if(fresh.length>prev.length){setState("excited");setTimeout(()=>setState("idle"),3000);}
-        return fresh;
-      });
+      setBriefings(fresh);
     };
     window.addEventListener("tlk-briefings-changed",update);
     const poll=setInterval(update,5000);
     return()=>{window.removeEventListener("tlk-briefings-changed",update);clearInterval(poll);};
   },[]);
 
-  const handleClick=()=>{
-    if(isDraggingRef.current)return;
-    setExpanded(e=>!e);
-    setState("excited");
-    setTimeout(()=>setState("idle"),400);
-  };
-
+  // ─── 拖拽 ───
   const handleDragStart=(e)=>{
     const cx=e.clientX||(e.touches&&e.touches[0].clientX);
     const cy=e.clientY||(e.touches&&e.touches[0].clientY);
@@ -5551,7 +5691,11 @@ function FloatingOrb({tasks,setTasks,projects,cats,catOf,tags,journals,history,t
       if(mx==null)return;
       const dx=mx-dragStartRef.current.mouseX;
       const dy=my-dragStartRef.current.mouseY;
-      if(Math.hypot(dx,dy)>5)isDraggingRef.current=true;
+      if(Math.hypot(dx,dy)>8){
+        isDraggingRef.current=true;
+        // 一旦确认是拖拽，取消长按计时器
+        if(longPressTimerRef.current){clearTimeout(longPressTimerRef.current);longPressTimerRef.current=null;}
+      }
       if(isDraggingRef.current)setPos({x:dragStartRef.current.orbX+dx,y:dragStartRef.current.orbY+dy});
     };
     const onUp=()=>{
@@ -5567,40 +5711,33 @@ function FloatingOrb({tasks,setTasks,projects,cats,catOf,tags,journals,history,t
     window.addEventListener("touchend",onUp);
   };
 
+  // ─── 朗读 ───
   const speak=async(text)=>{
     if(!cfg.voiceEnabled)return;
     if(speakCtrlRef.current)speakCtrlRef.current.stop();
     setState("speaking");setCaption(text);
-    speakCtrlRef.current=await speakBriefing(text,cfg.voiceProfile,{
-      volume:cfg.volume,
-      onProgress:(p)=>setCaption(p.full),
-      onEnd:()=>{setState("idle");setTimeout(()=>setCaption(""),3000);},
+    return new Promise((resolve)=>{
+      speakBriefing(text,cfg.voiceProfile,{
+        volume:cfg.volume,
+        onProgress:(p)=>setCaption(p.full),
+        onEnd:()=>{setState("idle");setTimeout(()=>setCaption(""),2000);resolve();},
+      }).then(ctrl=>{speakCtrlRef.current=ctrl;});
     });
   };
   
-  // ─── 用户对光球说话：语音识别 + AI 响应 ───
+  // ─── 语音识别 ───
   const recognizerRef=useRef(null);
-  const[listening,setListening]=useState(false);
-  const[heardText,setHeardText]=useState("");
-  const[thinking,setThinking]=useState(false);
-  
   const startListening=()=>{
-    if(listening||thinking)return;
-    if(speakCtrlRef.current)speakCtrlRef.current.stop(); // 用户说话时停止 AI 当前说话
-    setListening(true);
-    setHeardText("");
+    if(state==="listening"||state==="thinking")return;
+    if(speakCtrlRef.current)speakCtrlRef.current.stop();
     setState("listening");
     setCaption("🎤 我在听...");
     
     recognizerRef.current=createSpeechRecognizer({
       continuous:false,
-      onInterim:(text)=>{setHeardText(text);setCaption("🎤 "+text);},
-      onFinal:(text)=>{setHeardText(text);},
+      onInterim:(text)=>{setCaption("🎤 "+text);},
       onError:(err)=>{
-        console.warn("[ASR]",err.message);
-        setListening(false);
-        setState("idle");
-        setCaption("");
+        setState("idle");setCaption("");
         if(err.message&&err.message.includes("not-allowed")){
           showToast&&showToast("请允许麦克风权限","warn");
         }else if(err.message&&err.message.includes("no-speech")){
@@ -5608,76 +5745,52 @@ function FloatingOrb({tasks,setTasks,projects,cats,catOf,tags,journals,history,t
         }
       },
       onEnd:(finalText)=>{
-        setListening(false);
         if(finalText&&finalText.trim()){
           processUserSpeech(finalText.trim());
         }else{
-          setState("idle");
-          setCaption("");
+          setState("idle");setCaption("");
         }
       },
     });
     if(!recognizerRef.current){
-      setListening(false);
-      setState("idle");
-      setCaption("");
-      showToast&&showToast("浏览器不支持语音识别，请用 Chrome / Edge","warn");
+      setState("idle");setCaption("");
+      showToast&&showToast("浏览器不支持语音识别","warn");
       return;
     }
     recognizerRef.current.start();
   };
   
-  const stopListening=()=>{
-    if(recognizerRef.current){
-      recognizerRef.current.stop();
-    }
-  };
-  
-  // 用 ref 保存最近 10 轮对话历史（用户语音→AI 回复）
-  const voiceConvoRef=useRef([]);
-  
-  // 处理用户说的话 — 用完整 AI 工具链（跟 AssistantView 同等能力）
+  // ─── 处理用户语音 — 完整 AI 工具链 + 写入聊天历史 ───
   const processUserSpeech=async(userText)=>{
-    setThinking(true);
     setState("thinking");
-    setCaption("💭 思考中：「"+userText+"」");
+    setCaption("💭 「"+userText+"」");
+    
+    // 写入聊天历史（用户消息）
+    appendToChatHistory({role:"user",content:userText,ts:Date.now(),source:"voice"});
     
     try{
-      // ─── 1. 构造完整上下文 system prompt（复用 AI 助手页的逻辑）───
       const baseSys=buildAssistantSystemPrompt({tasks,cats,projects,tags,journals,today,displayName});
-      // 追加"语音对话"特定指令
-      const voiceSuffix=`\n\n## 当前对话场景\n用户正在通过语音和你对话（光球伴侣模式）。\n\n## 语音回复规则（非常重要）\n1. **回复长度**：50-120 字，不能太长（用户要听完）\n2. **绝对不能用** Markdown、列表、代码块、表格 — 因为这些会被 TTS 读出符号\n3. **口语化自然表达**，像跟朋友聊天\n4. **如果调用了工具**（建任务/改任务等），用一句话告诉用户做了什么\n5. **不要说"我"或"作为 AI"**，要用 Linek 第一人称\n6. **末尾不问"还有什么可以帮你"** 这种废话`;
+      const voiceSuffix=`\n\n## 当前对话场景\n用户正在通过语音和你（Linek）对话。\n\n## 语音回复规则\n1. 长度 50-120 字（用户要听完）\n2. **绝对禁用** Markdown、列表、代码块（TTS 会读出符号）\n3. 自然口语化，像朋友聊天\n4. 调用工具后用一句话说做了什么\n5. 不说"我"或"作为 AI"，用 Linek 第一人称\n6. 末尾不问"还有什么帮你"等废话`;
       const sysPrompt=baseSys+voiceSuffix;
       
-      // ─── 2. 构造历史消息（最近 10 轮）───
-      voiceConvoRef.current.push({role:"user",content:userText});
-      if(voiceConvoRef.current.length>20)voiceConvoRef.current=voiceConvoRef.current.slice(-20);
+      // 取最近 10 轮对话上下文
+      const history=getChatHistory().slice(-20).filter(m=>m.role==="user"||m.role==="assistant").map(m=>({role:m.role,content:m.content||""}));
       
-      const apiMsgs=[
-        {role:"system",content:sysPrompt},
-        ...voiceConvoRef.current,
-      ];
+      const apiMsgs=[{role:"system",content:sysPrompt},...history];
       
-      // ─── 3. 构造工具 handlers（跟 AssistantView 完全一致）───
       const handlers={
         createTask:(args)=>{
           const dueOk=args.due||today;
+        const dueEndOk=args.dueEnd&&args.dueEnd>=dueOk?args.dueEnd:"";
           const projectMatched=resolveProjectIdForVoice(args.projectId,projects);
           const newTask={
             id:Date.now()+Math.floor(Math.random()*1000),
             ...emptyTask,
-            title:args.title,
-            content:args.content||"",
-            due:dueOk,
-            timeStart:args.timeStart||"",
-            timeEnd:args.timeEnd||"",
-            duration:args.duration||"",
-            priority:args.priority||"中",
-            category:args.category||"work",
-            projectId:projectMatched,
-            sortKey:nextSortKey(),
-            createdAt:today,
-            done:false,
+            title:args.title,content:args.content||"",due:dueOk,dueEnd:dueEndOk,
+            timeStart:args.timeStart||"",timeEnd:args.timeEnd||"",
+            duration:args.duration||"",priority:args.priority||"中",
+            category:args.category||"work",projectId:projectMatched,
+            sortKey:nextSortKey(),createdAt:today,done:false,
           };
           setTasks(t=>[...t,newTask]);
           return{ok:true,task:newTask};
@@ -5714,47 +5827,109 @@ function FloatingOrb({tasks,setTasks,projects,cats,catOf,tags,journals,history,t
         },
       };
       
-      // ─── 4. 调用 AssistantWithTools（流式 + 工具）───
       const result=await callAssistantWithTools(apiMsgs,handlers,(progress)=>{
         if(progress.type==="tool_call"){
           setCaption(`🔧 ${progress.name}...`);
         }else if(progress.type==="content_delta"){
-          // 实时显示生成中文本
           setCaption(progress.full||userText);
         }
       });
       
       const replyText=(result.content||"嗯，我听到了").trim();
-      voiceConvoRef.current.push({role:"assistant",content:replyText});
       
-      setThinking(false);
+      // 写入聊天历史（AI 回复）
+      appendToChatHistory({role:"assistant",content:replyText,ts:Date.now(),source:"voice"});
       
-      // ─── 5. 让光球说出来 ───
+      // 朗读
       await speak(replyText);
     }catch(e){
-      console.warn("[Linek 对话]",e);
-      setThinking(false);
-      setState("idle");
-      setCaption("");
-      showToast&&showToast("AI 响应失败："+e.message,"warn");
+      console.warn("[Linek voice]",e);
+      setState("idle");setCaption("");
+      showToast&&showToast("AI 响应失败："+(e.message||""),"warn");
     }
   };
+  
+  // ─── 朗读所有未读 briefings 并清空 ───
+  const speakAllBriefings=async()=>{
+    if(briefings.length===0)return false;
+    
+    // 拼接所有未读消息
+    const msgs=briefings.slice(0,5).map((b,i)=>{
+      const prefix=briefings.length>1?`第 ${i+1} 条：`:"";
+      return prefix+b.message;
+    }).join("。 ");
+    
+    // 写入聊天历史
+    appendToChatHistory({
+      role:"assistant",
+      content:`📬 主动消息汇总：\n\n${briefings.slice(0,5).map((b,i)=>`${i+1}. **${b.title||b.type}** — ${b.message}`).join("\n")}`,
+      ts:Date.now(),
+      source:"briefing-batch",
+    });
+    
+    // 标记全部已读
+    const all=getBriefings().map(b=>briefings.find(x=>x.id===b.id)?{...b,read:true,readAt:Date.now()}:b);
+    setBriefingsStorage(all);
+    setBriefings([]);
+    window.dispatchEvent(new CustomEvent("tlk-briefings-changed"));
+    
+    // 朗读
+    await speak(msgs);
+    return true;
+  };
 
+  // ─── 点击光球 ───
+  const handleClick=()=>{
+    if(isDraggingRef.current)return;
+    // 当前在听 / 思考 / 说话 → 中断
+    if(state==="listening"){
+      if(recognizerRef.current)recognizerRef.current.stop();
+      return;
+    }
+    if(state==="thinking"||state==="speaking"){
+      if(speakCtrlRef.current)speakCtrlRef.current.stop();
+      setState("idle");setCaption("");
+      return;
+    }
+    // 有未读 briefings → 优先朗读它们
+    if(briefings.length>0){
+      speakAllBriefings();
+      return;
+    }
+    // 否则进入语音交互
+    startListening();
+  };
+  
+  // ─── 长按光球 = 跳到 AI 助手页（备用入口）───
+  const handleMouseDown=(e)=>{
+    if(longPressTimerRef.current)clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current=setTimeout(()=>{
+      if(!isDraggingRef.current){
+        // 长按 600ms 触发
+        onOpenAssistant&&onOpenAssistant();
+        longPressTimerRef.current=null;
+      }
+    },600);
+    handleDragStart(e);
+  };
+  const cancelLongPress=()=>{
+    if(longPressTimerRef.current){clearTimeout(longPressTimerRef.current);longPressTimerRef.current=null;}
+  };
+  
   useEffect(()=>{
     window.__linekSpeak=speak;
     window.__linekListen=startListening;
     return()=>{delete window.__linekSpeak;delete window.__linekListen;};
-  },[cfg.voiceEnabled,cfg.voiceProfile,cfg.volume,listening,thinking]);
+  },[cfg.voiceEnabled,cfg.voiceProfile,cfg.volume,state]);
   
-  // ─── 全局快捷键：按住空格说话（非输入框场景）───
+  // ─── 全局快捷键：长按空格说话 ───
   useEffect(()=>{
     let spacePressed=false;
     const onKeyDown=(e)=>{
       if(e.code!=="Space")return;
-      // 忽略输入框场景
       const tag=document.activeElement?.tagName;
       if(tag==="INPUT"||tag==="TEXTAREA"||document.activeElement?.isContentEditable)return;
-      if(spacePressed)return; // 防止 keydown 重复触发
+      if(spacePressed)return;
       spacePressed=true;
       e.preventDefault();
       startListening();
@@ -5765,15 +5940,12 @@ function FloatingOrb({tasks,setTasks,projects,cats,catOf,tags,journals,history,t
       if(tag==="INPUT"||tag==="TEXTAREA"||document.activeElement?.isContentEditable)return;
       if(!spacePressed)return;
       spacePressed=false;
-      stopListening();
+      if(recognizerRef.current)recognizerRef.current.stop();
     };
     window.addEventListener("keydown",onKeyDown);
     window.addEventListener("keyup",onKeyUp);
-    return()=>{
-      window.removeEventListener("keydown",onKeyDown);
-      window.removeEventListener("keyup",onKeyUp);
-    };
-  },[listening,thinking]);
+    return()=>{window.removeEventListener("keydown",onKeyDown);window.removeEventListener("keyup",onKeyUp);};
+  },[state]);
 
   if(!cfg.enabled)return null;
 
@@ -5781,17 +5953,30 @@ function FloatingOrb({tasks,setTasks,projects,cats,catOf,tags,journals,history,t
     idle:["#6d5fff","#a855f7","#ec4899"],
     excited:["#22d3ee","#a855f7","#ec4899"],
     shy:["#9333ea","#ec4899","#fb923c"],
+    listening:["#ef4444","#f97316","#fbbf24"],
+    thinking:["#a855f7","#6366f1","#06b6d4"],
     speaking:["#10d9a3","#22d3ee","#6d5fff"],
-    listening:["#ef4444","#f97316","#fbbf24"], // 红橙黄：表示正在听
-    thinking:["#a855f7","#6366f1","#06b6d4"], // 紫蓝青：思考中
-    celebrating:["#fbbf24","#ec4899","#22d3ee"],
   };
   const colors=stateColors[state]||stateColors.idle;
   const unread=briefings.length;
 
   return(
     <>
-      <div onClick={handleClick} onMouseDown={handleDragStart} onTouchStart={handleDragStart} style={{position:"fixed",left:pos.x-30,top:pos.y-30,width:60,height:60,zIndex:9000,cursor:isDraggingRef.current?"grabbing":"pointer",transition:isDraggingRef.current?"none":"left 2.4s cubic-bezier(0.65,0,0.35,1),top 2.4s cubic-bezier(0.65,0,0.35,1)",touchAction:"none"}}>
+      <div 
+        onClick={handleClick} 
+        onMouseDown={handleMouseDown} 
+        onMouseUp={cancelLongPress}
+        onMouseLeave={cancelLongPress}
+        onTouchStart={handleMouseDown}
+        onTouchEnd={cancelLongPress}
+        style={{
+          position:"fixed",left:pos.x-30,top:pos.y-30,width:60,height:60,
+          zIndex:9000,cursor:isDraggingRef.current?"grabbing":"pointer",
+          transition:isDraggingRef.current?"none":"left 2.4s cubic-bezier(0.65,0,0.35,1),top 2.4s cubic-bezier(0.65,0,0.35,1)",
+          touchAction:"none",
+        }}
+        title={unread>0?`${unread} 条新消息 · 点击听 / 长按打开 AI 助手`:"点击说话 · 长按打开 AI 助手"}
+      >
         {unread>0&&<div style={{position:"absolute",inset:-8,borderRadius:"50%",background:`conic-gradient(from 0deg,${colors[0]},${colors[1]},${colors[2]},${colors[0]})`,opacity:0.4,animation:"orbPulse 2s ease-in-out infinite",filter:"blur(8px)"}}/>}
         <div style={{position:"relative",width:"100%",height:"100%",borderRadius:"50%",background:`conic-gradient(from 0deg,${colors[0]},${colors[1]},${colors[2]},${colors[0]})`,boxShadow:`0 8px 32px ${colors[0]}66, 0 2px 8px ${colors[1]}44, inset 0 2px 8px rgba(255,255,255,0.4)`,backdropFilter:"blur(10px)",animation:`orbRotate 8s linear infinite, orbBreath 4s ease-in-out infinite`}}>
           <div style={{position:"absolute",inset:6,borderRadius:"50%",background:`radial-gradient(circle at 35% 30%,rgba(255,255,255,0.95),${colors[1]}88 40%,${colors[2]}66)`,mixBlendMode:"screen"}}/>
@@ -5800,16 +5985,18 @@ function FloatingOrb({tasks,setTasks,projects,cats,catOf,tags,journals,history,t
             <div style={{position:"absolute",inset:0,borderRadius:"50%",border:"2px solid rgba(16,217,163,0.4)",animation:"orbWave 1.2s ease-out infinite"}}/>
             <div style={{position:"absolute",inset:0,borderRadius:"50%",border:"2px solid rgba(34,211,238,0.3)",animation:"orbWave 1.2s ease-out infinite 0.4s"}}/>
           </>}
+          {state==="listening"&&<>
+            <div style={{position:"absolute",inset:0,borderRadius:"50%",border:"2px solid rgba(239,68,68,0.5)",animation:"orbWave 1s ease-out infinite"}}/>
+            <div style={{position:"absolute",inset:0,borderRadius:"50%",border:"2px solid rgba(249,115,22,0.4)",animation:"orbWave 1s ease-out infinite 0.3s"}}/>
+          </>}
         </div>
-        {unread>0&&<div style={{position:"absolute",top:-4,right:-4,minWidth:18,height:18,padding:"0 5px",borderRadius:9,background:"linear-gradient(135deg,#ef4444,#ec4899)",color:"#fff",fontSize:11,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 8px rgba(239,68,68,0.5)"}}>{unread>9?"9+":unread}</div>}
+        {unread>0&&<div style={{position:"absolute",top:-4,right:-4,minWidth:18,height:18,padding:"0 5px",borderRadius:9,background:"linear-gradient(135deg,#ef4444,#ec4899)",color:"#fff",fontSize:11,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 8px rgba(239,68,68,0.5)"}}>{unread>99?"99+":unread}</div>}
       </div>
 
       {caption&&<div style={{position:"fixed",left:"50%",bottom:30,transform:"translateX(-50%)",maxWidth:"min(90vw,560px)",padding:"10px 18px",background:"rgba(20,18,38,0.92)",color:"#fff",borderRadius:14,fontSize:14,lineHeight:1.55,zIndex:8999,boxShadow:"0 12px 36px rgba(0,0,0,0.3)",backdropFilter:"blur(20px)",border:"1px solid rgba(255,255,255,0.12)",animation:"fadeInUp 0.3s ease",textAlign:"center"}}>
-        <div style={{fontSize:9,color:"#a78bfa",letterSpacing:"0.18em",marginBottom:4,fontWeight:600}}>LINEK SPEAKING</div>
+        <div style={{fontSize:9,color:"#a78bfa",letterSpacing:"0.18em",marginBottom:4,fontWeight:600}}>LINEK {state==="listening"?"LISTENING":state==="thinking"?"THINKING":"SPEAKING"}</div>
         <div>{caption}</div>
       </div>}
-
-      {expanded&&<OrbBriefingCard briefings={briefings} orbPos={pos} onClose={()=>setExpanded(false)} onOpenAssistant={onOpenAssistant} onAccept={(b)=>handleBriefingAccept(b,setBriefings,showToast)} onDismiss={(b)=>handleBriefingDismiss(b,setBriefings)}/>}
     </>
   );
 }
@@ -5900,6 +6087,65 @@ function handleBriefingDismiss(brief,setBriefings){
   recordBriefDismiss(brief.type);
 }
 
+// 思考过程折叠块（类似 Claude 的 thinking UI）
+function ThinkingBlock({th,content,toolCalls,round}){
+  const[expanded,setExpanded]=useState(false);
+  const hasToolCalls=Array.isArray(toolCalls)&&toolCalls.length>0;
+  const hasContent=content&&String(content).trim().length>0;
+  const preview=hasContent?String(content).trim().slice(0,40)+(String(content).length>40?"…":""):"";
+  const summaryParts=[];
+  if(preview)summaryParts.push(preview);
+  if(hasToolCalls)summaryParts.push(`调用 ${toolCalls.length} 个工具`);
+  const summary=summaryParts.join(" · ")||"思考中";
+  
+  return(
+    <div style={{
+      borderRadius:11,
+      border:`1px dashed ${th.glassBorder}`,
+      background:th.glass1+"66",
+      overflow:"hidden",
+      fontSize:12,
+    }}>
+      <button onClick={()=>setExpanded(!expanded)} style={{
+        width:"100%",padding:"8px 12px",background:"transparent",
+        display:"flex",alignItems:"center",gap:8,cursor:"pointer",textAlign:"left",
+      }}>
+        <span style={{fontSize:11,color:th.ink3,letterSpacing:"0.06em"}}>💭</span>
+        <span className="mono" style={{fontSize:10,letterSpacing:"0.14em",color:th.ink3,fontWeight:600,textTransform:"uppercase"}}>思考过程 {round?`· 第 ${round} 轮`:""}</span>
+        <span style={{flex:1,fontSize:11,color:th.ink3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontStyle:"italic",opacity:0.75}}>{!expanded&&summary}</span>
+        <span style={{fontSize:10,color:th.ink3,transform:expanded?"rotate(180deg)":"none",transition:"transform 0.2s"}}>▾</span>
+      </button>
+      {expanded&&(
+        <div style={{padding:"4px 12px 12px",borderTop:`1px dashed ${th.glassBorder}`,marginTop:0}}>
+          {hasContent&&(
+            <div style={{fontSize:12.5,color:th.ink1,lineHeight:1.65,padding:"10px 0",fontStyle:"italic",whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{content}</div>
+          )}
+          {hasToolCalls&&(
+            <div style={{display:"flex",flexDirection:"column",gap:4,marginTop:hasContent?6:8}}>
+              {toolCalls.map((tc,idx)=>{
+                const args=tc.args||{};
+                const argsPreview=typeof args==="object"&&args!==null?Object.entries(args).slice(0,3).map(([k,v])=>{
+                  const vs=typeof v==="string"?(v.length>30?v.slice(0,30)+"…":v):JSON.stringify(v).slice(0,30);
+                  return`${k}:${vs}`;
+                }).join(" · "):"";
+                return(
+                  <div key={idx} style={{padding:"6px 10px",background:th.glass2,borderRadius:7,display:"flex",alignItems:"flex-start",gap:8,fontSize:11}}>
+                    <span style={{flexShrink:0,fontSize:11}}>🔧</span>
+                    <div style={{flex:1,minWidth:0}}>
+                      <span className="mono" style={{color:th.accent2,fontWeight:600,letterSpacing:"0.02em"}}>{tc.name}</span>
+                      {argsPreview&&<span className="mono" style={{color:th.ink3,marginLeft:8,fontSize:10}}>{argsPreview}</span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AssistantView({th,tasks,setTasks,projects,cats,catOf,tags,journals,today,displayName,nextSortKey,showToast,emptyTask,setTrash,user}){
   const[messages,setMessages]=useState(()=>{
     try{
@@ -5923,6 +6169,21 @@ function AssistantView({th,tasks,setTasks,projects,cats,catOf,tags,journals,toda
   const scrollRef=useRef(null);
   // 防循环：标记是不是从云端 sync 过来的写入（这种写入不应该再触发上传）
   const fromCloudRef=useRef(false);
+  
+  // 监听光球写入的聊天消息（光球语音对话后自动刷新）
+  useEffect(()=>{
+    const onChatChanged=()=>{
+      try{
+        const r=localStorage.getItem("tlk_chat_v1");
+        if(r){
+          const arr=JSON.parse(r);
+          setMessages(arr);
+        }
+      }catch(e){console.warn("[AssistantView] 接收光球消息失败",e);}
+    };
+    window.addEventListener("tlk-chat-changed",onChatChanged);
+    return()=>window.removeEventListener("tlk-chat-changed",onChatChanged);
+  },[]);
   
   // 持久化对话 + 通知 MainApp 触发云同步
   useEffect(()=>{
@@ -6011,6 +6272,7 @@ function AssistantView({th,tasks,setTasks,projects,cats,catOf,tags,journals,toda
     createTask:(args)=>{
       try{
         const dueOk=args.due||today;
+        const dueEndOk=args.dueEnd&&args.dueEnd>=dueOk?args.dueEnd:"";
         let projId=args.projectId||"";
         // 校验项目：AI 传的 projectId 必须真实存在 + 项目名/关键词必须出现在 title 里
         if(projId){
@@ -6060,7 +6322,7 @@ function AssistantView({th,tasks,setTasks,projects,cats,catOf,tags,journals,toda
       setTasks(list=>list.map(t=>{
         if(t.id!==tid)return t;
         const next={...t};
-        ["title","due","timeStart","timeEnd","priority","content"].forEach(k=>{if(args[k]!==undefined)next[k]=args[k];});
+        ["title","due","dueEnd","timeStart","timeEnd","priority","content"].forEach(k=>{if(args[k]!==undefined)next[k]=args[k];});
         if(args.duration!==undefined)next.duration=String(args.duration);
         if(args.done!==undefined){next.done=!!args.done;next.progress=args.done?1:0;if(args.done)next.completedAt=today;}
         return next;
@@ -6082,7 +6344,7 @@ function AssistantView({th,tasks,setTasks,projects,cats,catOf,tags,journals,toda
       if(filter==="done")list=tasks.filter(t=>t.done);
       else if(filter==="undone")list=tasks.filter(t=>!t.done);
       else if(filter==="overdue")list=tasks.filter(t=>!t.done&&t.due&&t.due<today);
-      else if(filter==="today")list=tasks.filter(t=>!t.done&&t.due===today);
+      else if(filter==="today")list=tasks.filter(t=>!t.done&&taskCoversDate(t,today));
       else if(filter==="future")list=tasks.filter(t=>!t.done&&t.due&&t.due>today);
       const items=list.slice(0,limit).map(t=>({
         id:t.id,
@@ -7009,7 +7271,30 @@ function TaskCard({task:t,th,catOf,projOf,today,nowMin,poppingId,runningId,toggl
             {t.repeat&&<Ic n="repeat" size={10} color={th.ink3}/>}
             {t.timeStart&&<span className="mono tnum" style={{fontSize:10,color:overdue?"#ff5d7a":th.ink3,fontWeight:overdue?600:400}}>{t.timeStart}{t.timeEnd?`–${t.timeEnd}`:""}</span>}
             {overdue&&<span className="mono" style={{fontSize:9,color:"#ff5d7a",padding:"1px 6px",borderRadius:5,background:"rgba(255,93,122,0.15)",fontWeight:600}}>逾期</span>}
-            {t.due&&t.due!==today&&<span className="mono" style={{fontSize:9,color:th.ink3}}>{t.due.slice(5).replace("-","/")}</span>}
+            {t.due&&(()=>{
+              if(t.dueEnd&&t.dueEnd!==t.due){
+                const totalDays=taskDuration(t);
+                let currentDay=0;
+                if(today>=t.due&&today<=t.dueEnd){
+                  const d1=new Date(t.due+"T00:00:00");
+                  const d2=new Date(today+"T00:00:00");
+                  currentDay=Math.round((d2-d1)/86400000)+1;
+                }
+                const startStr=t.due.slice(5).replace("-","/");
+                const endStr=t.dueEnd.slice(5).replace("-","/");
+                return(
+                  <span className="mono" style={{fontSize:9,color:th.ink3,display:"inline-flex",alignItems:"center",gap:5,padding:"1px 6px",borderRadius:5,background:th.glass2}}>
+                    <span style={{fontSize:9}}>📅</span>
+                    <span style={{fontWeight:600}}>{startStr}–{endStr}</span>
+                    {currentDay>0&&<span style={{color:th.accent2,fontWeight:700}}>Day {currentDay}/{totalDays}</span>}
+                  </span>
+                );
+              }
+              if(t.due!==today){
+                return<span className="mono" style={{fontSize:9,color:th.ink3}}>{t.due.slice(5).replace("-","/")}</span>;
+              }
+              return null;
+            })()}
           </div>
           <div style={{fontSize:14,fontWeight:500,color:th.ink0,lineHeight:1.4,textDecoration:t.done?"line-through":"none",cursor:t.content?"pointer":"default"}} onClick={()=>t.content&&setExpanded({...expanded,[t.id]:!exp})}>
             {t.title}
@@ -7078,7 +7363,7 @@ function TaskForm({th,cats,projects,tags,addTag,taskForm,setTaskForm,addOrEditTa
         </div>
         <input value={taskForm.title} onChange={e=>setF("title",e.target.value)} onKeyDown={e=>{if(e.isComposing||e.keyCode===229)return;if(e.key==="Enter"&&!e.shiftKey&&ok){e.preventDefault();addOrEditTask();}}} placeholder="任务标题…" autoFocus={typeof window!=="undefined"&&window.innerWidth>=900} className="inp" style={{marginBottom:11,fontSize:15,fontWeight:500}}/>
         <textarea value={taskForm.content||""} onChange={e=>setF("content",e.target.value)} placeholder="备注（可选）" rows={2} className="inp" style={{marginBottom:14,resize:"vertical",fontFamily:"inherit"}}/>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:12}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
           <div style={{position:"relative"}}>
             <label className="mono" style={{display:"block",fontSize:10,color:th.ink3,marginBottom:5,letterSpacing:"0.15em"}}>分类</label>
             <button type="button" onClick={()=>setCatOpen(o=>!o)} className="inp" style={{padding:"10px 12px",paddingRight:28,textAlign:"left",display:"flex",alignItems:"center",gap:8,width:"100%",cursor:"pointer",position:"relative"}}>
@@ -7110,10 +7395,39 @@ function TaskForm({th,cats,projects,tags,addTag,taskForm,setTaskForm,addOrEditTa
               {PRIORITIES.map(p=><option key={p} value={p} style={{background:th.bg1,color:th.ink0}}>{p} · {p==="高"?"重要紧急":p==="中"?"常规":"空闲"}</option>)}
             </select>
           </div>
+        </div>
+        {/* 任务周期：开始日期 + 结束日期（结束可选，留空=当天任务）*/}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12,position:"relative"}}>
           <div>
-            <label className="mono" style={{display:"block",fontSize:10,color:th.ink3,marginBottom:5,letterSpacing:"0.15em"}}>日期</label>
-            <input type="date" value={taskForm.due||""} onChange={e=>setF("due",e.target.value)} className="inp" style={{padding:"10px 12px",colorScheme:th.isDark?"dark":"light"}}/>
+            <label className="mono" style={{display:"block",fontSize:10,color:th.ink3,marginBottom:5,letterSpacing:"0.15em"}}>开始日期</label>
+            <input type="date" value={taskForm.due||""} onChange={e=>{
+              const v=e.target.value;
+              setTaskForm(prev=>{
+                const next={...prev,due:v};
+                if(prev.dueEnd&&v&&prev.dueEnd<v)next.dueEnd="";
+                return next;
+              });
+            }} className="inp" style={{padding:"10px 12px",colorScheme:th.isDark?"dark":"light"}}/>
           </div>
+          <div>
+            <label className="mono" style={{display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:10,color:th.ink3,marginBottom:5,letterSpacing:"0.15em"}}>
+              <span>结束日期 <span style={{opacity:0.6,fontSize:9,fontWeight:400}}>（可选 · 跨期）</span></span>
+              {taskForm.dueEnd&&<button type="button" onClick={()=>setF("dueEnd","")} style={{fontSize:9,color:th.ink3,padding:"1px 6px",background:th.glass2,borderRadius:4,letterSpacing:0,fontWeight:600,cursor:"pointer"}}>清除</button>}
+            </label>
+            <input type="date" value={taskForm.dueEnd||""} min={taskForm.due||undefined} onChange={e=>setF("dueEnd",e.target.value)} className="inp" placeholder="留空 = 当日任务" style={{padding:"10px 12px",colorScheme:th.isDark?"dark":"light"}} disabled={!taskForm.due}/>
+          </div>
+          {/* 跨期提示 */}
+          {taskForm.due&&taskForm.dueEnd&&taskForm.due!==taskForm.dueEnd&&(()=>{
+            const d1=new Date(taskForm.due+"T00:00:00");
+            const d2=new Date(taskForm.dueEnd+"T00:00:00");
+            const days=Math.round((d2-d1)/86400000)+1;
+            return(
+              <div style={{gridColumn:"1/-1",marginTop:-4,padding:"6px 10px",borderRadius:7,background:`linear-gradient(90deg,${th.accent}15,${th.accent3}15)`,border:`1px solid ${th.accent}30`,fontSize:11,color:th.ink1,display:"flex",alignItems:"center",gap:6}}>
+                <span style={{fontSize:11}}>📅</span>
+                <span>跨期任务 · 共 <b className="mono tnum" style={{color:th.accent2}}>{days}</b> 天</span>
+              </div>
+            );
+          })()}
         </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:12}}>
           <div>
@@ -7252,7 +7566,7 @@ function KanbanView({th,tasks:allTasks,searchedTasks,catOf,today,nowMin,toggleTa
   // 推导列：backlog(无日期且未完成) / today(今日) / doing(progress>0 或正在跑) / review(progress>=0.8未完成) / done(已完成)
   const cols=[
     {id:"backlog",title:"待办",color:"#a8a2c4",match:t=>!t.done&&(!t.due||t.due>today)&&(t.progress||0)<0.1},
-    {id:"today",title:"今日",color:"#6d5fff",match:t=>!t.done&&t.due===today&&(t.progress||0)<0.1},
+    {id:"today",title:"今日",color:"#6d5fff",match:t=>!t.done&&taskCoversDate(t,today)&&(t.progress||0)<0.1},
     {id:"doing",title:"进行中",color:"#ec4899",match:t=>!t.done&&(t.progress||0)>=0.1&&(t.progress||0)<0.8},
     {id:"review",title:"待复盘",color:"#f5a524",match:t=>!t.done&&(t.progress||0)>=0.8},
     {id:"done",title:"已完成",color:"#10d9a3",match:t=>t.done},
@@ -7340,7 +7654,20 @@ function MonthView({th,tasks:allTasks,searchedTasks,today,setView,startEdit,catO
 
   const tasksByDate=useMemo(()=>{
     const m={};
-    tasks.forEach(t=>{if(t.due){m[t.due]=(m[t.due]||[]).concat(t);}});
+    tasks.forEach(t=>{
+      if(!t.due)return;
+      if(t.dueEnd&&t.dueEnd>t.due){
+        let cur=t.due;
+        let count=0;
+        while(cur<=t.dueEnd&&count<400){
+          m[cur]=(m[cur]||[]).concat(t);
+          cur=addDays(cur,1);
+          count++;
+        }
+      }else{
+        m[t.due]=(m[t.due]||[]).concat(t);
+      }
+    });
     return m;
   },[tasks]);
 

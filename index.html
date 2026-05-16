@@ -618,7 +618,9 @@ function recordBriefAccept(type){
 }
 
 // ═══ AI 伴侣（光球）配置 ═══
-const COMPANION_KEY="tlk_companion_v1";
+const COMPANION_KEY="tlk_companion_v2"; // v2: 默认音色改为 vivi
+// 一次性迁移：清掉旧的 v1（防止旧的默认音色残留）
+(function(){try{localStorage.removeItem("tlk_companion_v1");}catch{}})();
 const COMPANION_DEFAULTS={
   enabled:true,
   wanderMode:"wander",
@@ -3032,7 +3034,7 @@ function MainApp({user}){
     let cancelled=false;
     const tick=()=>{
       if(cancelled||document.hidden)return;
-      insightEngineTick(tasks,today).catch(e=>console.warn("[insight tick]",e));
+      insightEngineTick(tasks,today,history,projects).catch(e=>console.warn("[insight tick]",e));
     };
     const initialTimer=setTimeout(tick,5000);
     const interval=setInterval(tick,30*60*1000);
@@ -5448,11 +5450,124 @@ function detectOverload(tasks,today,_cfg){
   return{type:"overload",sender:"strategist",title:"过载预警",severity:totalHours>10?"high":"medium",data:{count:todayTasks.length,totalHours:totalHours.toFixed(1)}};
 }
 
-function runInsightDetectors(tasks,today,cfg){
+// #4 周报草稿（周五 17:00 之后）
+function detectWeekly(tasks,today,history,_cfg){
+  if(!_cfg.signals.weekly)return null;
+  if(isBriefTypeDisabled("weekly"))return null;
+  const now=new Date();
+  const dow=now.getDay(); // 5 = 周五
+  const h=now.getHours();
+  // 周五 17:00 之后，或周六全天
+  if(!((dow===5&&h>=17)||dow===6))return null;
+  // 当周是否已生成
+  const existing=getBriefings().find(b=>b.type==="weekly"&&Date.now()-b.ts<7*86400000);
+  if(existing)return null;
+  
+  // 统计本周完成
+  const d=new Date(today);
+  const monday=new Date(d);monday.setDate(d.getDate()-((d.getDay()+6)%7));
+  const weekStart=monday.toISOString().slice(0,10);
+  let weekDone=0,weekTotal=0;
+  tasks.forEach(t=>{
+    if(t.due>=weekStart){
+      weekTotal++;
+      if(t.done)weekDone++;
+    }
+  });
+  if(weekTotal<3)return null;
+  return{type:"weekly",sender:"coach",title:"本周回顾",severity:"medium",data:{weekDone,weekTotal,completionRate:Math.round(weekDone/weekTotal*100)}};
+}
+
+// #5 节奏异常：连续 3 天工时极高（>10h）或极低（<1h）
+function detectRhythm(tasks,today,history,_cfg){
+  if(!_cfg.signals.rhythm)return null;
+  if(isBriefTypeDisabled("rhythm"))return null;
+  if(!Array.isArray(history)||history.length<3)return null;
+  
+  // 取最近 3 天
+  const recent=history.slice(-3);
+  if(recent.length<3)return null;
+  
+  let extremeCount=0;
+  let pattern="";
+  const minsList=[];
+  recent.forEach(h=>{
+    const mins=(h.tasks||[]).reduce((s,t)=>s+(parseInt(t.actualMin)||0),0);
+    minsList.push(mins);
+    if(mins>=600)extremeCount++; // >10h
+    else if(mins>0&&mins<60)extremeCount++; // <1h（排除完全空白的天）
+  });
+  
+  if(extremeCount<3)return null;
+  
+  const avg=Math.round(minsList.reduce((a,b)=>a+b,0)/3);
+  pattern=avg>=600?"high":"low";
+  
+  return{type:"rhythm",sender:"coach",title:"节奏提醒",severity:"medium",data:{pattern,avgHours:(avg/60).toFixed(1),days:3}};
+}
+
+// #6 项目失焦：项目耗时 > 80% 但完成进度 < 60%
+function detectProjectDrift(tasks,today,projects,_cfg){
+  if(!_cfg.signals.drift)return null;
+  if(isBriefTypeDisabled("drift"))return null;
+  if(!Array.isArray(projects)||projects.length===0)return null;
+  
+  for(const p of projects){
+    if(p.done||p.archived)continue;
+    const projTasks=tasks.filter(t=>t.projectId===p.id);
+    if(projTasks.length<3)continue;
+    const doneCount=projTasks.filter(t=>t.done).length;
+    const completion=doneCount/projTasks.length;
+    if(completion>=0.6)continue;
+    // 如果项目有 deadline 且时间过 70% 但进度 < 60%
+    if(p.deadline&&p.createdAt){
+      const total=new Date(p.deadline)-new Date(p.createdAt);
+      const elapsed=Date.now()-new Date(p.createdAt).getTime();
+      if(elapsed/total>=0.7&&completion<0.6){
+        return{type:"drift",sender:"strategist",title:"项目失焦提醒",severity:"medium",data:{projectName:p.name,completion:Math.round(completion*100),timeUsed:Math.round(elapsed/total*100)}};
+      }
+    }
+  }
+  return null;
+}
+
+// #7 完成爆发庆祝（今天完成 > 日均 1.5x）
+function detectCelebrate(tasks,today,history,_cfg){
+  if(!_cfg.signals.celebrate)return null;
+  if(isBriefTypeDisabled("celebrate"))return null;
+  
+  const todayDone=tasks.filter(t=>t.done&&t.completedAt===today).length;
+  if(todayDone<5)return null; // 至少完成 5 项才算"爆发"
+  
+  // 算最近 7 天日均
+  if(!Array.isArray(history)||history.length<3)return null;
+  const recent=history.slice(-7);
+  let totalDone=0,activeDays=0;
+  recent.forEach(h=>{
+    const d=(h.tasks||[]).filter(t=>t.done).length;
+    if(d>0){totalDone+=d;activeDays++;}
+  });
+  if(activeDays===0)return null;
+  const avg=totalDone/activeDays;
+  if(todayDone<avg*1.5)return null;
+  
+  // 防止重复触发（同一天只触发一次）
+  const existing=getBriefings().find(b=>b.type==="celebrate"&&new Date(b.ts).toDateString()===new Date().toDateString());
+  if(existing)return null;
+  
+  return{type:"celebrate",sender:"coach",title:"今日爆发 🎉",severity:"low",data:{todayDone,avg:avg.toFixed(1),ratio:(todayDone/avg).toFixed(1)}};
+}
+
+function runInsightDetectors(tasks,today,cfg,history,projects){
   const signals=[];
   [detectMorningPlan,detectDelay,detectOverload].forEach(fn=>{
     try{const s=fn(tasks,today,cfg);if(s)signals.push(s);}catch(e){console.warn("[detector]",fn.name,e);}
   });
+  // 需要 history/projects 的 detector
+  try{const s=detectWeekly(tasks,today,history,cfg);if(s)signals.push(s);}catch(e){console.warn("[detector] weekly",e);}
+  try{const s=detectRhythm(tasks,today,history,cfg);if(s)signals.push(s);}catch(e){console.warn("[detector] rhythm",e);}
+  try{const s=detectProjectDrift(tasks,today,projects,cfg);if(s)signals.push(s);}catch(e){console.warn("[detector] drift",e);}
+  try{const s=detectCelebrate(tasks,today,history,cfg);if(s)signals.push(s);}catch(e){console.warn("[detector] celebrate",e);}
   return signals;
 }
 
@@ -5478,6 +5593,22 @@ async function generateBriefingMessage(signal){
     prompt=`你是用户的 AI 策略师。今天用户安排过满，请生成温和提醒。
 详情：${data.count} 项任务，总预估 ${data.totalHours} 小时
 要求：30-60 字，提醒但不焦虑，暗示可调整`;
+  }else if(signal.type==="weekly"){
+    prompt=`你是用户的 AI 教练。生成一段本周回顾摘要。
+本周完成 ${data.weekDone}/${data.weekTotal} 项任务，完成率 ${data.completionRate}%。
+要求：40-70 字，正面但实事求是，根据完成率给出鼓励或反思`;
+  }else if(signal.type==="rhythm"){
+    prompt=`你是用户的 AI 教练。生成节奏提醒。
+最近 3 天日均工时 ${data.avgHours} 小时，属于 ${data.pattern==="high"?"高强度":"低强度"}。
+要求：40-70 字，温暖关心而不批评，建议调整或保持`;
+  }else if(signal.type==="drift"){
+    prompt=`你是用户的 AI 策略师。生成项目失焦提醒。
+项目"${data.projectName}"：时间已耗 ${data.timeUsed}%，但完成度只有 ${data.completion}%。
+要求：40-70 字，提示性，建议重新评估或简化`;
+  }else if(signal.type==="celebrate"){
+    prompt=`你是用户的 AI 教练。庆祝用户今天高产。
+今天完成 ${data.todayDone} 项任务，是日均 ${data.avg} 项的 ${data.ratio} 倍。
+要求：30-60 字，真诚兴奋的庆祝，可以建议短暂休息`;
   }
   if(!prompt)return signal.title;
   try{
@@ -5487,11 +5618,19 @@ async function generateBriefingMessage(signal){
     if(signal.type==="morning")return`早上好！今天有 ${data.count} 项任务等着你${data.highCount>0?`，其中 ${data.highCount} 项是高优先级`:""}。`;
     if(signal.type==="delay")return`「${data.taskTitle}」已经拖了 ${data.days} 天了，要不要今天解决一下？`;
     if(signal.type==="overload")return`今天安排了 ${data.count} 项任务共 ${data.totalHours} 小时，节奏有点紧。`;
+    if(signal.type==="weekly")return`本周完成 ${data.weekDone}/${data.weekTotal} 项任务，完成率 ${data.completionRate}%。要不要看看 AI 周报详情？`;
+    if(signal.type==="rhythm")return`最近 3 天日均 ${data.avgHours} 小时，节奏${data.pattern==="high"?"偏紧":"偏松"}，要不要调整一下？`;
+    if(signal.type==="drift")return`项目「${data.projectName}」时间过半但进度还不到 60%，要不要重新规划？`;
+    if(signal.type==="celebrate")return`今天完成 ${data.todayDone} 项，超日均 ${data.ratio} 倍，好棒！🎉`;
     return signal.title;
   }
 }
 
 function generateBriefingActions(signal){
+  if(signal.type==="weekly")return[{label:"看完整周报",action:"open_weekly_report"},{label:"稍后",action:"snooze"}];
+  if(signal.type==="rhythm")return[{label:"知道了",action:"acknowledge"},{label:"详细分析",action:"open_assistant"}];
+  if(signal.type==="drift")return[{label:"重新规划",action:"open_assistant"},{label:"稍后",action:"snooze"}];
+  if(signal.type==="celebrate")return[{label:"谢谢 🙏",action:"acknowledge"},{label:"该休息了",action:"snooze"}];
   if(signal.type==="morning")return[{label:"AI 帮我排期",action:"smart_schedule"},{label:"我自己安排",action:"snooze"}];
   if(signal.type==="delay")return[
     {label:"今天就做",action:"set_today",payload:{taskId:signal.data.taskId}},
@@ -5502,10 +5641,10 @@ function generateBriefingActions(signal){
   return[];
 }
 
-async function insightEngineTick(tasks,today){
+async function insightEngineTick(tasks,today,history,projects){
   const cfg=getCompanionConfig();
   if(!cfg.enabled||cfg.briefFreq==="off")return;
-  const signals=runInsightDetectors(tasks,today,cfg);
+  const signals=runInsightDetectors(tasks,today,cfg,history||[],projects||[]);
   if(signals.length===0)return;
   const existing=getBriefings();
   const filtered=signals.filter(s=>!existing.find(b=>b.type===s.type&&Date.now()-b.ts<30*60*1000));
@@ -9789,6 +9928,192 @@ function Bullet({th,children}){
   );
 }
 
+// AI 伴侣（光球）配置面板
+function LinekSettings({th,showToast}){
+  const[cfg,setCfg]=useState(()=>getCompanionConfig());
+  const[testingVoice,setTestingVoice]=useState(null);
+  
+  const update=(patch)=>{
+    const next={...cfg,...patch};
+    setCfg(next);
+    setCompanionConfig(next);
+  };
+  
+  const updateSignals=(key,value)=>{
+    const next={...cfg,signals:{...cfg.signals,[key]:value}};
+    setCfg(next);
+    setCompanionConfig(next);
+  };
+  
+  // 试听音色
+  const testVoice=async(voiceKey)=>{
+    if(testingVoice)return;
+    setTestingVoice(voiceKey);
+    try{
+      const ctrl=await speakBriefing("你好，我是 Linek，很高兴认识你",voiceKey,{volume:cfg.volume,onEnd:()=>setTestingVoice(null)});
+      if(!ctrl)setTestingVoice(null);
+    }catch(e){
+      setTestingVoice(null);
+      showToast&&showToast("试听失败：" + e.message,"warn");
+    }
+  };
+  
+  const sectionStyle={marginBottom:24};
+  const labelStyle={display:"block",fontSize:12,letterSpacing:"0.18em",color:th.ink3,marginBottom:10,fontWeight:600};
+  const cardStyle={padding:14,borderRadius:12,background:th.glass1,border:`1px solid ${th.glassBorder}`};
+  
+  return(
+    <div>
+      {/* 总开关 */}
+      <div style={sectionStyle}>
+        <div className="mono" style={labelStyle}>显示光球</div>
+        <div style={cardStyle}>
+          <label style={{display:"flex",alignItems:"center",gap:12,cursor:"pointer"}}>
+            <input type="checkbox" checked={cfg.enabled} onChange={e=>update({enabled:e.target.checked})} style={{width:18,height:18,cursor:"pointer",accentColor:th.accent}}/>
+            <div style={{flex:1}}>
+              <div style={{color:th.ink0,fontSize:14,fontWeight:500,marginBottom:2}}>启用 Linek 光球</div>
+              <div style={{color:th.ink3,fontSize:12}}>关闭后所有界面不显示光球，仅 AI 助手页可用</div>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      {/* 移动模式 */}
+      <div style={sectionStyle}>
+        <div className="mono" style={labelStyle}>位置模式</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+          {[
+            ["wander","🦋 自由漫游","8-15 秒切换位置"],
+            ["fixed","📌 固定右下","传统位置"],
+          ].map(([k,name,desc])=>{
+            const active=cfg.wanderMode===k;
+            return(
+              <button key={k} onClick={()=>update({wanderMode:k})} style={{padding:14,borderRadius:11,background:active?th.glass2:th.glass1,border:`1.5px solid ${active?th.accent:th.glassBorder}`,textAlign:"left",cursor:"pointer",transition:"all 0.2s"}}>
+                <div style={{color:th.ink0,fontSize:13,fontWeight:600,marginBottom:2}}>{name}</div>
+                <div style={{color:th.ink3,fontSize:11}}>{desc}</div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 语音开关 */}
+      <div style={sectionStyle}>
+        <div className="mono" style={labelStyle}>语音</div>
+        <div style={cardStyle}>
+          <label style={{display:"flex",alignItems:"center",gap:12,cursor:"pointer",marginBottom:12}}>
+            <input type="checkbox" checked={cfg.voiceEnabled} onChange={e=>update({voiceEnabled:e.target.checked})} style={{width:18,height:18,cursor:"pointer",accentColor:th.accent}}/>
+            <div style={{flex:1}}>
+              <div style={{color:th.ink0,fontSize:14,fontWeight:500,marginBottom:2}}>启用语音播报</div>
+              <div style={{color:th.ink3,fontSize:12}}>关闭后只有字幕，不发声</div>
+            </div>
+          </label>
+          
+          {/* 音量 */}
+          <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${th.glassBorder}`}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+              <span style={{fontSize:12,color:th.ink2}}>音量</span>
+              <span className="mono tnum" style={{fontSize:11,color:th.accent2,fontWeight:600}}>{Math.round(cfg.volume*100)}%</span>
+            </div>
+            <input type="range" min="0" max="1" step="0.05" value={cfg.volume} onChange={e=>update({volume:parseFloat(e.target.value)})} style={{width:"100%",accentColor:th.accent}} disabled={!cfg.voiceEnabled}/>
+          </div>
+        </div>
+      </div>
+
+      {/* 音色选择 */}
+      <div style={sectionStyle}>
+        <div className="mono" style={labelStyle}>音色 · 选择 Linek 的声音</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+          {Object.entries(TTS_VOICES).map(([k,v])=>{
+            const active=cfg.voiceProfile===k;
+            const testing=testingVoice===k;
+            return(
+              <button key={k} onClick={()=>{update({voiceProfile:k});testVoice(k);}} disabled={!cfg.voiceEnabled} style={{padding:14,borderRadius:11,background:active?`linear-gradient(135deg,${th.accent}25,${th.accent3}15)`:th.glass1,border:`1.5px solid ${active?th.accent:th.glassBorder}`,textAlign:"left",cursor:cfg.voiceEnabled?"pointer":"not-allowed",opacity:cfg.voiceEnabled?1:0.4,transition:"all 0.2s",position:"relative"}}>
+                <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
+                  <div style={{color:th.ink0,fontSize:13,fontWeight:600}}>{v.name}</div>
+                  {active&&<span style={{fontSize:10,color:th.accent2}}>✓ 已选</span>}
+                  {testing&&<span className="mono" style={{fontSize:9,color:th.accent2,letterSpacing:"0.1em"}}>♪ 试听中</span>}
+                </div>
+                <div style={{color:th.ink3,fontSize:11}}>{v.desc}</div>
+              </button>
+            );
+          })}
+        </div>
+        <div style={{marginTop:8,fontSize:11,color:th.ink3,fontStyle:"italic"}}>点击音色 = 切换并试听</div>
+      </div>
+
+      {/* 主动消息频率 */}
+      <div style={sectionStyle}>
+        <div className="mono" style={labelStyle}>主动消息频率</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6}}>
+          {[
+            ["off","关闭","#ef4444"],
+            ["low","低","#f97316"],
+            ["medium","适中","#22c55e"],
+            ["high","高","#6d5fff"],
+          ].map(([k,name,color])=>{
+            const active=cfg.briefFreq===k;
+            return(
+              <button key={k} onClick={()=>update({briefFreq:k})} style={{padding:"9px 6px",borderRadius:8,background:active?color+"22":th.glass1,border:`1.5px solid ${active?color:th.glassBorder}`,color:active?color:th.ink2,fontSize:13,fontWeight:600,cursor:"pointer",transition:"all 0.2s"}}>{name}</button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 夜间静音 */}
+      <div style={sectionStyle}>
+        <div className="mono" style={labelStyle}>夜间静音</div>
+        <div style={cardStyle}>
+          <label style={{display:"flex",alignItems:"center",gap:12,cursor:"pointer"}}>
+            <input type="checkbox" checked={cfg.nightSilent} onChange={e=>update({nightSilent:e.target.checked})} style={{width:18,height:18,cursor:"pointer",accentColor:th.accent}}/>
+            <div style={{flex:1}}>
+              <div style={{color:th.ink0,fontSize:14,fontWeight:500,marginBottom:2}}>22:00 - 8:00 不打扰</div>
+              <div style={{color:th.ink3,fontSize:12}}>夜间不出声，Linek 保持静默</div>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      {/* 主动消息类型 */}
+      <div style={sectionStyle}>
+        <div className="mono" style={labelStyle}>主动消息类型 · 各 detector 独立开关</div>
+        <div style={{display:"flex",flexDirection:"column",gap:6}}>
+          {[
+            ["morning","🌅 早安规划","每天 9 点首次访问"],
+            ["delay","⏰ 拖延提醒","任务推迟 3+ 天"],
+            ["overload","⚠️ 过载预警","当日任务超 8 项或 8 小时"],
+            ["weekly","📊 周报草稿","周五 17:00 自动生成"],
+            ["rhythm","💓 节奏异常","连续高/低强度警告"],
+            ["drift","🎯 项目失焦","项目耗时过半但进度低"],
+            ["celebrate","🎉 完成爆发","单日完成超日均 1.5 倍"],
+          ].map(([k,name,desc])=>{
+            const enabled=cfg.signals&&cfg.signals[k];
+            return(
+              <label key={k} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:9,background:th.glass1,border:`1px solid ${th.glassBorder}`,cursor:"pointer"}}>
+                <input type="checkbox" checked={!!enabled} onChange={e=>updateSignals(k,e.target.checked)} style={{width:16,height:16,cursor:"pointer",accentColor:th.accent}}/>
+                <div style={{flex:1}}>
+                  <div style={{color:th.ink0,fontSize:13,fontWeight:500}}>{name}</div>
+                  <div style={{color:th.ink3,fontSize:11,marginTop:1}}>{desc}</div>
+                </div>
+              </label>
+            );
+          })}
+        </div>
+      </div>
+      
+      {/* 重置 */}
+      <div style={{marginTop:30,padding:14,borderRadius:11,background:th.glass1,border:`1px dashed ${th.glassBorder}`,fontSize:12,color:th.ink3,textAlign:"center"}}>
+        <button onClick={()=>{
+          if(confirm("确定恢复 Linek 默认设置？"))
+          {try{localStorage.removeItem(COMPANION_KEY);}catch{}
+          setCfg(COMPANION_DEFAULTS);
+          showToast&&showToast("已重置","success");}
+        }} style={{padding:"6px 14px",fontSize:11,color:th.accent2,cursor:"pointer",letterSpacing:"0.05em",background:"transparent"}}>恢复默认设置</button>
+      </div>
+    </div>
+  );
+}
+
 function Settings({th,themeId,setThemeId,cats,setCats,projects,setProjects,tasks,history,setTasks,setHistory,trash,restoreTask,purgeTask,emptyTrash,tags,addTag,updateTag,removeTag,onClose,user,onSignOut,notifPerm,askNotif,installPWA,installState,today,showToast,catOf,requestProfileUpdate,requestWeeklyInsight,profileGenerating}){
   const[tab,setTab]=useState("appearance");
   const exportJSON=()=>{const data={tasks,history,cats,projects,exportedAt:todayStr()};const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=`timelinek-${todayStr()}.json`;a.click();URL.revokeObjectURL(url);showToast("已导出","success");};
@@ -9830,13 +10155,16 @@ function Settings({th,themeId,setThemeId,cats,setCats,projects,setProjects,tasks
           <button onClick={onClose} style={{width:34,height:34,borderRadius:10,background:th.glass2,display:"flex",alignItems:"center",justifyContent:"center"}}><Ic n="close" size={14} color={th.ink2}/></button>
         </div>
         <div style={{padding:"10px 16px",display:"flex",gap:4,overflowX:"auto",borderBottom:`1px solid ${th.glassBorder}`}} className="slim-scroll">
-          {[["appearance","外观","palette"],["account","账户","user"],["ai","AI 画像","zap"],["categories","分类","layers"],["tags",`标签${tags&&tags.length?` · ${tags.length}`:""}`,"hash"],["sound","声音","bell"],["review","复盘","star"],["trash",`回收站${trash&&trash.length?` · ${trash.length}`:""}`,"trash"],["data","数据","download"],["about","关于","info"]].map(([k,l,ic])=>(
+          {[["appearance","外观","palette"],["account","账户","user"],["linek","AI 伴侣","sparkles"],["ai","AI 画像","zap"],["categories","分类","layers"],["tags",`标签${tags&&tags.length?` · ${tags.length}`:""}`,"hash"],["sound","声音","bell"],["review","复盘","star"],["trash",`回收站${trash&&trash.length?` · ${trash.length}`:""}`,"trash"],["data","数据","download"],["about","关于","info"]].map(([k,l,ic])=>(
             <button key={k} onClick={()=>setTab(k)} className={`view-tab ${tab===k?"active":""}`} style={{flexShrink:0}}>
               <Ic n={ic} size={11} color={tab===k?"#fff":th.ink2}/> {l}
             </button>
           ))}
         </div>
         <div className="slim-scroll" style={{padding:22,overflowY:"auto",flex:1}}>
+          {tab==="linek"&&(
+            <LinekSettings th={th} showToast={showToast}/>
+          )}
           {tab==="appearance"&&(
             <div>
               <div style={{marginBottom:16}}>

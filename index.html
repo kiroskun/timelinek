@@ -1862,7 +1862,8 @@ ${body}
       if(idx>=0&&idx<allTasks.length&&allTasks.some(t=>t.id===p.id)){realId=p.id;}
       else if(idx>=0&&idx<allTasks.length){realId=allTasks[idx].id;}
     }
-    return realId==null?null:{id:realId,time:p.time,reason:p.reason};
+    const realTask=allTasks.find(t=>t.id===realId);
+    return realId==null?null:{id:realId,title:realTask?realTask.title:"未知任务",time:p.time,reason:p.reason};
   }).filter(Boolean);
   return{summary:parsed.summary||"",plan:remapped,notes:Array.isArray(parsed.notes)?parsed.notes:[],stats:{overdue:overdueT.length,today:todayT.length,future:futureT.length}};
 }
@@ -4870,7 +4871,7 @@ function InboxMessageContent({th,msg,sender}){
               <div key={i} style={{padding:"9px 14px",background:th.glass1,borderRadius:9,fontSize:12.5,color:th.ink1,lineHeight:1.6,marginBottom:5,display:"flex",gap:10,alignItems:"flex-start"}}>
                 <span className="mono tnum" style={{color:sender.color,fontWeight:700,minWidth:42}}>{p.time||"--:--"}</span>
                 <div style={{flex:1}}>
-                  <div style={{fontWeight:500}}>任务 #{p.id}</div>
+                  <div style={{fontWeight:500}}>{p.title||`任务 #${p.id}`}</div>
                   {p.reason&&<div style={{fontSize:11,color:th.ink3,marginTop:2}}>{p.reason}</div>}
                 </div>
               </div>
@@ -5109,7 +5110,7 @@ function renderMessageAsHtml(msg,sender){
     }
     if(Array.isArray(c.plan)&&c.plan.length){
       sections.push(`<h3 style="font-size:13px;font-weight:600;color:#7a6a90;letter-spacing:0.18em;text-transform:uppercase;margin:24px 0 10px">📅 排期方案</h3>`);
-      const items=c.plan.map(p=>`<div style="padding:10px 14px;background:#fafaff;border-radius:8px;margin:0 0 6px;display:flex;gap:14px;align-items:flex-start"><span style="color:${sender.color};font-weight:700;font-family:monospace;min-width:50px">${esc(p.time||"--:--")}</span><div style="flex:1"><div style="font-size:14px;color:#1a1530;font-weight:500">任务 #${esc(p.id)}</div>${p.reason?`<div style="font-size:12px;color:#888;margin-top:3px;line-height:1.5">${esc(p.reason)}</div>`:""}</div></div>`).join("");
+      const items=c.plan.map(p=>`<div style="padding:10px 14px;background:#fafaff;border-radius:8px;margin:0 0 6px;display:flex;gap:14px;align-items:flex-start"><span style="color:${sender.color};font-weight:700;font-family:monospace;min-width:50px">${esc(p.time||"--:--")}</span><div style="flex:1"><div style="font-size:14px;color:#1a1530;font-weight:500">${esc(p.title||"任务 #"+p.id)}</div>${p.reason?`<div style="font-size:12px;color:#888;margin-top:3px;line-height:1.5">${esc(p.reason)}</div>`:""}</div></div>`).join("");
       sections.push(items);
     }
     if(c.closing){
@@ -5270,7 +5271,7 @@ function renderMessageAsPlainText(msg,sender){
     if(Array.isArray(c.plan)&&c.plan.length){
       lines.push("◆ 排期方案");
       c.plan.forEach(p=>{
-        lines.push(`  ${p.time||"--:--"}    任务 #${p.id}`);
+        lines.push(`  ${p.time||"--:--"}    ${p.title||"任务 #"+p.id}`);
         if(p.reason)lines.push(`           ${p.reason}`);
       });
       lines.push("");
@@ -5414,7 +5415,7 @@ function detectMorningPlan(tasks,today,_cfg){
   const todayTasks=tasks.filter(t=>!t.done&&t.due===today);
   if(todayTasks.length===0)return null;
   const highCount=todayTasks.filter(t=>t.priority==="高").length;
-  const totalMins=todayTasks.reduce((s,t)=>s+(t.duration||60),0);
+  const totalMins=todayTasks.reduce((s,t)=>s+(parseFloat(t.duration)||60),0);
   return{type:"morning",sender:"strategist",title:"早安规划",severity:"medium",data:{count:todayTasks.length,highCount,totalMins,sample:todayTasks.slice(0,3).map(t=>t.title)}};
 }
 
@@ -5441,7 +5442,7 @@ function detectOverload(tasks,today,_cfg){
   if(!_cfg.signals.overload)return null;
   if(isBriefTypeDisabled("overload"))return null;
   const todayTasks=tasks.filter(t=>!t.done&&t.due===today);
-  const totalMins=todayTasks.reduce((s,t)=>s+(t.duration||60),0);
+  const totalMins=todayTasks.reduce((s,t)=>s+(parseFloat(t.duration)||60),0);
   const totalHours=totalMins/60;
   if(todayTasks.length<8&&totalHours<8)return null;
   return{type:"overload",sender:"strategist",title:"过载预警",severity:totalHours>10?"high":"medium",data:{count:todayTasks.length,totalHours:totalHours.toFixed(1)}};

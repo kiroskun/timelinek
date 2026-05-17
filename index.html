@@ -642,7 +642,15 @@ const COMPANION_DEFAULTS={
   },
 };
 function getCompanionConfig(){
-  try{const r=localStorage.getItem(COMPANION_KEY);return r?{...COMPANION_DEFAULTS,...JSON.parse(r)}:COMPANION_DEFAULTS;}catch{return COMPANION_DEFAULTS;}
+  try{
+    const r=localStorage.getItem(COMPANION_KEY);
+    const cfg=r?{...COMPANION_DEFAULTS,...JSON.parse(r)}:COMPANION_DEFAULTS;
+    // 校验 voiceProfile 是否有效，无效则强制回退到 vivi
+    if(!cfg.voiceProfile||(typeof TTS_VOICES!=="undefined"&&!TTS_VOICES[cfg.voiceProfile])){
+      cfg.voiceProfile="vivi";
+    }
+    return cfg;
+  }catch{return COMPANION_DEFAULTS;}
 }
 function setCompanionConfig(cfg){
   try{localStorage.setItem(COMPANION_KEY,JSON.stringify(cfg));}catch{}
@@ -787,23 +795,11 @@ async function speakBriefing(text,voiceKey="vivi",opts={}){
     ctrl.cloudReady=true;
     audio.play().catch(e=>console.warn("[TTS] 云端播放失败",e));
   }catch(e){
-    console.warn("[TTS] 云端失败，启用本地兜底:",e.message);
-    cloudFailed=true;
-  }
-  
-  // 仅在云端失败时，启用本地 TTS 兜底（避免完全无声音）
-  if(cloudFailed&&window.speechSynthesis&&!ctrl.stopped){
-    try{
-      const u=new SpeechSynthesisUtterance(text);
-      u.lang="zh-CN";u.rate=voice.speedRatio||1;u.pitch=voice.pitchRatio||1;u.volume=volume;
-      const voices=window.speechSynthesis.getVoices();
-      const zhVoice=voices.find(v=>v.lang.startsWith("zh"));
-      if(zhVoice)u.voice=zhVoice;
-      u.onboundary=(e)=>{if(!ctrl.stopped)onProgress({charIndex:e.charIndex,full:text});};
-      u.onend=()=>{if(!ctrl.stopped)onEnd("local-fallback-end");};
-      window.speechSynthesis.cancel();
-      window.speechSynthesis.speak(u);
-    }catch(e){console.warn("[TTS] 本地兜底也失败",e);onEnd("all-failed");}
+    console.warn("[TTS] 云端 TTS 失败：",e.message);
+    console.warn("[TTS] 不使用本地兜底（避免机械男声），改为静默 + 通知用户");
+    // 不再用本地 SpeechSynthesis 兜底 — 避免机械男声体验
+    // 仅显示字幕，无音频
+    onEnd&&onEnd("cloud-failed-silent");
   }
 
   return ctrl;
@@ -8850,26 +8846,44 @@ function WeeklyReport({th,tasks,history,cats,projects,catOf,today}){
   const data=useMemo(()=>{
     const weekStart=addDays(today,-6); // 近 7 天
     // 收集本周完成的任务
-    const completedThisWeek=[];
+    // ─── 收集本周已完成任务（按 id 去重）───
+    const thisWeekMap=new Map();
+    // 现有 tasks 优先（最新状态）
     tasks.forEach(t=>{
-      if(t.done&&(t.completedAt||"")>=weekStart)completedThisWeek.push({...t,_d:t.completedAt});
+      if(!t||!t.id)return;
+      const d=t.completedAt||t.due;
+      if(t.done&&d>=weekStart&&d<=today){
+        thisWeekMap.set(t.id,{...t,_d:d});
+      }
     });
-    const curIds=new Set(tasks.map(t=>t.id));
+    // history 补充（已删除的历史任务）
     (history||[]).forEach(h=>{
-      if(h.date<weekStart)return;
-      (h.tasks||[]).forEach(ht=>{if(ht.done&&!curIds.has(ht.id))completedThisWeek.push({...ht,_d:h.date});});
+      if(h.date<weekStart||h.date>today)return;
+      (h.tasks||[]).forEach(ht=>{
+        if(!ht||!ht.id||thisWeekMap.has(ht.id))return;
+        if(ht.done)thisWeekMap.set(ht.id,{...ht,_d:h.date});
+      });
     });
-    // 上周对比
+    const completedThisWeek=Array.from(thisWeekMap.values());
+    
+    // 上周对比（同样去重）
     const lastWeekStart=addDays(today,-13),lastWeekEnd=addDays(today,-7);
-    const completedLastWeek=[];
+    const lastWeekMap=new Map();
     tasks.forEach(t=>{
-      const d=t.completedAt||"";
-      if(t.done&&d>=lastWeekStart&&d<lastWeekEnd)completedLastWeek.push(t);
+      if(!t||!t.id)return;
+      const d=t.completedAt||t.due||"";
+      if(t.done&&d>=lastWeekStart&&d<lastWeekEnd){
+        lastWeekMap.set(t.id,{...t,_d:d});
+      }
     });
     (history||[]).forEach(h=>{
       if(h.date<lastWeekStart||h.date>=lastWeekEnd)return;
-      (h.tasks||[]).forEach(ht=>{if(ht.done&&!curIds.has(ht.id))completedLastWeek.push(ht);});
+      (h.tasks||[]).forEach(ht=>{
+        if(!ht||!ht.id||lastWeekMap.has(ht.id))return;
+        if(ht.done)lastWeekMap.set(ht.id,{...ht,_d:h.date});
+      });
     });
+    const completedLastWeek=Array.from(lastWeekMap.values());
     // 按分类汇总
     const byCat={};
     completedThisWeek.forEach(t=>{const k=t.category||"other";byCat[k]=(byCat[k]||0)+1;});
@@ -9350,20 +9364,53 @@ function TodayReview({th,tasks,catOf,today}){
 function RangeReview({th,tasks,history,catOf,today,days,label}){
   const start=addDays(today,-(days-1));
   const dates=[];for(let i=0;i<days;i++)dates.push(addDays(start,i));
-  let totalDone=0,totalDur=0,totalCount=0;
-  const catStats={};
-  dates.forEach(d=>{
-    const entry=d===today?{tasks:tasks.filter(t=>t.due===today)}:history.find(h=>h.date===d);
-    if(!entry)return;
-    (entry.tasks||[]).forEach(t=>{
-      totalCount++;
-      if(t.done){totalDone++;totalDur+=t.actualMin||0;}
-      catStats[t.category]=catStats[t.category]||{total:0,done:0,dur:0};
-      catStats[t.category].total++;
-      if(t.done){catStats[t.category].done++;catStats[t.category].dur+=t.actualMin||0;}
+  
+  // ─── 收集范围内所有出现过的任务（按 id 去重），优先用最新版本 ───
+  // 策略：同一个任务 id 在 history 多日里出现过 → 只取最近一份（最接近今日）
+  // 因为 history 是逐日快照，旧的快照里 done=false 但今日已 done，应以最新为准
+  const seen=new Map(); // id → task with _d (which date it was seen on)
+  
+  // 1. 先处理 history（按日期从旧到新）
+  const histInRange=(history||[]).filter(h=>h.date>=start&&h.date<today).sort((a,b)=>a.date.localeCompare(b.date));
+  histInRange.forEach(h=>{
+    (h.tasks||[]).forEach(t=>{
+      if(!t||!t.id)return;
+      seen.set(t.id,{...t,_d:h.date});
     });
   });
-  const dailyDone=dates.map(d=>{const e=d===today?{tasks:tasks.filter(t=>t.due===today)}:history.find(h=>h.date===d);return(e?.tasks||[]).filter(t=>t.done).length;});
+  
+  // 2. 再处理 tasks（今日和未完成任务的实时状态会覆盖 history 里的旧快照）
+  // 但只统计 due 在范围内的
+  tasks.forEach(t=>{
+    if(!t||!t.id)return;
+    if(!t.due)return;
+    if(t.due<start||t.due>today)return;
+    seen.set(t.id,{...t,_d:t.due});
+  });
+  
+  // ─── 累计统计 ───
+  let totalDone=0,totalDur=0,totalCount=0;
+  const catStats={};
+  seen.forEach(t=>{
+    totalCount++;
+    if(t.done){
+      totalDone++;
+      totalDur+=parseInt(t.actualMin)||0;
+    }
+    catStats[t.category]=catStats[t.category]||{total:0,done:0,dur:0};
+    catStats[t.category].total++;
+    if(t.done){
+      catStats[t.category].done++;
+      catStats[t.category].dur+=parseInt(t.actualMin)||0;
+    }
+  });
+  
+  // ─── 每日完成趋势：按 task._d（其归属日）分组 ───
+  const dailyDone=dates.map(d=>{
+    let n=0;
+    seen.forEach(t=>{if(t._d===d&&t.done)n++;});
+    return n;
+  });
   const maxDaily=Math.max(...dailyDone,1);
   return(
     <div className="fadeIn" style={{display:"flex",flexDirection:"column",gap:14}}>

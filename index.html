@@ -732,7 +732,10 @@ function createSpeechRecognizer({onInterim,onFinal,onError,onEnd,continuous=fals
 
 async function speakBriefing(text,voiceKey="vivi",opts={}){
   const cfg=getCompanionConfig();
-  if(!cfg.voiceEnabled||isInNightSilent())return null;
+  // 试听等强制场景可绕过开关 / 夜间静音
+  if(!opts.force){
+    if(!cfg.voiceEnabled||isInNightSilent())return null;
+  }
   if(!text||!text.trim())return null;
 
   const voice=TTS_VOICES[voiceKey]||TTS_VOICES.vivi;
@@ -5906,7 +5909,7 @@ function FloatingOrb({tasks,setTasks,projects,cats,catOf,tags,journals,history,t
     
     try{
       const baseSys=buildAssistantSystemPrompt({tasks,cats,projects,tags,journals,today,displayName});
-      const voiceSuffix=`\n\n## 当前对话场景\n用户正在通过语音和你（Linek）对话。\n\n## 语音回复规则\n1. 长度 50-120 字（用户要听完）\n2. **绝对禁用** Markdown、列表、代码块（TTS 会读出符号）\n3. 自然口语化，像朋友聊天\n4. 调用工具后用一句话说做了什么\n5. 不说"我"或"作为 AI"，用 Linek 第一人称\n6. 末尾不问"还有什么帮你"等废话`;
+      const voiceSuffix=`\n\n## 当前对话场景\n用户正在通过**语音**和你（Linek）对话——你**确实有语音能力**，你说的话会被 TTS 朗读出来。\n\n## 语音回复规则\n1. 长度 50-120 字（用户要听完）\n2. **绝对禁用** Markdown、列表、代码块（TTS 会读出符号）\n3. 自然口语化，像朋友聊天\n4. 调用工具后用一句话说做了什么\n5. 用 Linek 第一人称（"我帮你..."），**绝对不要说"我是文字型 AI，没有语音"**\n6. 末尾不问"还有什么帮你"等废话\n7. 用户问你能不能说话/有没有语音 → 回答"当然能，我现在不就在跟你说话嘛"`;
       const sysPrompt=baseSys+voiceSuffix;
       
       // 取最近 10 轮对话上下文
@@ -8846,22 +8849,22 @@ function WeeklyReport({th,tasks,history,cats,projects,catOf,today}){
   const data=useMemo(()=>{
     const weekStart=addDays(today,-6); // 近 7 天
     // 收集本周完成的任务
-    // ─── 收集本周已完成任务（按 id 去重）───
+    // ─── 严格收集本周已完成任务（按 id 去重）───
     const thisWeekMap=new Map();
-    // 现有 tasks 优先（最新状态）
     tasks.forEach(t=>{
-      if(!t||!t.id)return;
-      const d=t.completedAt||t.due;
+      if(!t||t.id==null)return;
+      const d=t.completedAt||t.due||"";
       if(t.done&&d>=weekStart&&d<=today){
-        thisWeekMap.set(t.id,{...t,_d:d});
+        thisWeekMap.set(String(t.id),{...t,_d:d});
       }
     });
-    // history 补充（已删除的历史任务）
     (history||[]).forEach(h=>{
       if(h.date<weekStart||h.date>today)return;
       (h.tasks||[]).forEach(ht=>{
-        if(!ht||!ht.id||thisWeekMap.has(ht.id))return;
-        if(ht.done)thisWeekMap.set(ht.id,{...ht,_d:h.date});
+        if(!ht||ht.id==null)return;
+        const sid=String(ht.id);
+        if(thisWeekMap.has(sid))return;
+        if(ht.done)thisWeekMap.set(sid,{...ht,_d:h.date});
       });
     });
     const completedThisWeek=Array.from(thisWeekMap.values());
@@ -9365,27 +9368,31 @@ function RangeReview({th,tasks,history,catOf,today,days,label}){
   const start=addDays(today,-(days-1));
   const dates=[];for(let i=0;i<days;i++)dates.push(addDays(start,i));
   
-  // ─── 收集范围内所有出现过的任务（按 id 去重），优先用最新版本 ───
-  // 策略：同一个任务 id 在 history 多日里出现过 → 只取最近一份（最接近今日）
-  // 因为 history 是逐日快照，旧的快照里 done=false 但今日已 done，应以最新为准
-  const seen=new Map(); // id → task with _d (which date it was seen on)
+  // ─── 严格去重：按 task id ，tasks 优先 ───
+  const seen=new Map();
   
-  // 1. 先处理 history（按日期从旧到新）
-  const histInRange=(history||[]).filter(h=>h.date>=start&&h.date<today).sort((a,b)=>a.date.localeCompare(b.date));
-  histInRange.forEach(h=>{
-    (h.tasks||[]).forEach(t=>{
-      if(!t||!t.id)return;
-      seen.set(t.id,{...t,_d:h.date});
-    });
+  // 1. 全部 tasks 中 due 或 dueEnd 落在范围内的（最新实时状态）
+  tasks.forEach(t=>{
+    if(!t||t.id==null||!t.due)return;
+    const dueIn=t.due>=start&&t.due<=today;
+    const endIn=t.dueEnd&&t.dueEnd>=start&&t.dueEnd<=today;
+    const spanCover=t.dueEnd&&t.due<=today&&t.dueEnd>=start;
+    if(!dueIn&&!endIn&&!spanCover)return;
+    // 归属日：完成任务用 completedAt，未完成用 due
+    const attribDate=(t.done&&t.completedAt&&t.completedAt>=start&&t.completedAt<=today)?t.completedAt:t.due;
+    seen.set(String(t.id),{...t,_d:attribDate});
   });
   
-  // 2. 再处理 tasks（今日和未完成任务的实时状态会覆盖 history 里的旧快照）
-  // 但只统计 due 在范围内的
-  tasks.forEach(t=>{
-    if(!t||!t.id)return;
-    if(!t.due)return;
-    if(t.due<start||t.due>today)return;
-    seen.set(t.id,{...t,_d:t.due});
+  // 2. history 里在范围内、且 tasks 没有的（已删除）— 单独按"完成日"归类
+  const histInRange=(history||[]).filter(h=>h.date>=start&&h.date<=today);
+  histInRange.forEach(h=>{
+    (h.tasks||[]).forEach(t=>{
+      if(!t||t.id==null)return;
+      const sid=String(t.id);
+      if(seen.has(sid))return; // 实时数据优先
+      // history 任务的归属日就是该 history 的日期
+      seen.set(sid,{...t,_d:h.date});
+    });
   });
   
   // ─── 累计统计 ───
@@ -9397,15 +9404,16 @@ function RangeReview({th,tasks,history,catOf,today,days,label}){
       totalDone++;
       totalDur+=parseInt(t.actualMin)||0;
     }
-    catStats[t.category]=catStats[t.category]||{total:0,done:0,dur:0};
-    catStats[t.category].total++;
+    const cat=t.category||"other";
+    catStats[cat]=catStats[cat]||{total:0,done:0,dur:0};
+    catStats[cat].total++;
     if(t.done){
-      catStats[t.category].done++;
-      catStats[t.category].dur+=parseInt(t.actualMin)||0;
+      catStats[cat].done++;
+      catStats[cat].dur+=parseInt(t.actualMin)||0;
     }
   });
   
-  // ─── 每日完成趋势：按 task._d（其归属日）分组 ───
+  // ─── 每日完成趋势：按 task._d 分组 ───
   const dailyDone=dates.map(d=>{
     let n=0;
     seen.forEach(t=>{if(t._d===d&&t.done)n++;});
@@ -9997,7 +10005,7 @@ function LinekSettings({th,showToast}){
     if(testingVoice)return;
     setTestingVoice(voiceKey);
     try{
-      const ctrl=await speakBriefing("你好，我是 Linek，很高兴认识你",voiceKey,{volume:cfg.volume,onEnd:()=>setTestingVoice(null)});
+      const ctrl=await speakBriefing("你好，我是 Linek，很高兴认识你",voiceKey,{volume:cfg.volume,force:true,onEnd:()=>setTestingVoice(null)});
       if(!ctrl)setTestingVoice(null);
     }catch(e){
       setTestingVoice(null);
@@ -10014,14 +10022,14 @@ function LinekSettings({th,showToast}){
       {/* 总开关 */}
       <div style={sectionStyle}>
         <div className="mono" style={labelStyle}>显示光球</div>
-        <div style={cardStyle}>
-          <label style={{display:"flex",alignItems:"center",gap:12,cursor:"pointer"}}>
-            <input type="checkbox" checked={cfg.enabled} onChange={e=>update({enabled:e.target.checked})} style={{width:18,height:18,cursor:"pointer",accentColor:th.accent}}/>
-            <div style={{flex:1}}>
-              <div style={{color:th.ink0,fontSize:14,fontWeight:500,marginBottom:2}}>启用 Linek 光球</div>
-              <div style={{color:th.ink3,fontSize:12}}>关闭后所有界面不显示光球，仅 AI 助手页可用</div>
-            </div>
-          </label>
+        <div style={{...cardStyle,display:"flex",alignItems:"center",gap:12}}>
+          <div style={{flex:1}}>
+            <div style={{color:th.ink0,fontSize:14,fontWeight:500,marginBottom:2}}>启用 Linek 光球</div>
+            <div style={{color:th.ink3,fontSize:12}}>关闭后所有界面不显示光球，仅 AI 助手页可用</div>
+          </div>
+          <button onClick={()=>update({enabled:!cfg.enabled})} style={{width:48,height:26,borderRadius:13,background:cfg.enabled?th.accent:th.glass2,position:"relative",border:"none",cursor:"pointer",transition:"background 0.2s",flexShrink:0}}>
+            <div style={{width:20,height:20,borderRadius:"50%",background:"#fff",position:"absolute",top:3,left:cfg.enabled?25:3,transition:"left 0.2s",boxShadow:"0 1px 4px rgba(0,0,0,0.3)"}}/>
+          </button>
         </div>
       </div>
 
@@ -10048,13 +10056,15 @@ function LinekSettings({th,showToast}){
       <div style={sectionStyle}>
         <div className="mono" style={labelStyle}>语音</div>
         <div style={cardStyle}>
-          <label style={{display:"flex",alignItems:"center",gap:12,cursor:"pointer",marginBottom:12}}>
-            <input type="checkbox" checked={cfg.voiceEnabled} onChange={e=>update({voiceEnabled:e.target.checked})} style={{width:18,height:18,cursor:"pointer",accentColor:th.accent}}/>
+          <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:12}}>
             <div style={{flex:1}}>
               <div style={{color:th.ink0,fontSize:14,fontWeight:500,marginBottom:2}}>启用语音播报</div>
               <div style={{color:th.ink3,fontSize:12}}>关闭后只有字幕，不发声</div>
             </div>
-          </label>
+            <button onClick={()=>update({voiceEnabled:!cfg.voiceEnabled})} style={{width:48,height:26,borderRadius:13,background:cfg.voiceEnabled?th.accent:th.glass2,position:"relative",border:"none",cursor:"pointer",transition:"background 0.2s",flexShrink:0}}>
+              <div style={{width:20,height:20,borderRadius:"50%",background:"#fff",position:"absolute",top:3,left:cfg.voiceEnabled?25:3,transition:"left 0.2s",boxShadow:"0 1px 4px rgba(0,0,0,0.3)"}}/>
+            </button>
+          </div>
           
           {/* 音量 */}
           <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${th.glassBorder}`}}>
@@ -10075,7 +10085,7 @@ function LinekSettings({th,showToast}){
             const active=cfg.voiceProfile===k;
             const testing=testingVoice===k;
             return(
-              <button key={k} onClick={()=>{update({voiceProfile:k});testVoice(k);}} disabled={!cfg.voiceEnabled} style={{padding:14,borderRadius:11,background:active?`linear-gradient(135deg,${th.accent}25,${th.accent3}15)`:th.glass1,border:`1.5px solid ${active?th.accent:th.glassBorder}`,textAlign:"left",cursor:cfg.voiceEnabled?"pointer":"not-allowed",opacity:cfg.voiceEnabled?1:0.4,transition:"all 0.2s",position:"relative"}}>
+              <button key={k} onClick={()=>{update({voiceProfile:k});testVoice(k);}} style={{padding:14,borderRadius:11,background:active?`linear-gradient(135deg,${th.accent}25,${th.accent3}15)`:th.glass1,border:`1.5px solid ${active?th.accent:th.glassBorder}`,textAlign:"left",cursor:"pointer",transition:"all 0.2s",position:"relative"}}>
                 <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
                   <div style={{color:th.ink0,fontSize:13,fontWeight:600}}>{v.name}</div>
                   {active&&<span style={{fontSize:10,color:th.accent2}}>✓ 已选</span>}
@@ -10086,7 +10096,7 @@ function LinekSettings({th,showToast}){
             );
           })}
         </div>
-        <div style={{marginTop:8,fontSize:11,color:th.ink3,fontStyle:"italic"}}>点击音色 = 切换并试听</div>
+        <div style={{marginTop:8,fontSize:11,color:th.ink3,fontStyle:"italic"}}>点击音色 = 切换并立刻试听（即使语音播报已关闭）</div>
       </div>
 
       {/* 主动消息频率 */}
@@ -10110,14 +10120,14 @@ function LinekSettings({th,showToast}){
       {/* 夜间静音 */}
       <div style={sectionStyle}>
         <div className="mono" style={labelStyle}>夜间静音</div>
-        <div style={cardStyle}>
-          <label style={{display:"flex",alignItems:"center",gap:12,cursor:"pointer"}}>
-            <input type="checkbox" checked={cfg.nightSilent} onChange={e=>update({nightSilent:e.target.checked})} style={{width:18,height:18,cursor:"pointer",accentColor:th.accent}}/>
-            <div style={{flex:1}}>
-              <div style={{color:th.ink0,fontSize:14,fontWeight:500,marginBottom:2}}>22:00 - 8:00 不打扰</div>
-              <div style={{color:th.ink3,fontSize:12}}>夜间不出声，Linek 保持静默</div>
-            </div>
-          </label>
+        <div style={{...cardStyle,display:"flex",alignItems:"center",gap:12}}>
+          <div style={{flex:1}}>
+            <div style={{color:th.ink0,fontSize:14,fontWeight:500,marginBottom:2}}>22:00 - 8:00 不打扰</div>
+            <div style={{color:th.ink3,fontSize:12}}>夜间不出声，Linek 保持静默</div>
+          </div>
+          <button onClick={()=>update({nightSilent:!cfg.nightSilent})} style={{width:48,height:26,borderRadius:13,background:cfg.nightSilent?th.accent:th.glass2,position:"relative",border:"none",cursor:"pointer",transition:"background 0.2s",flexShrink:0}}>
+            <div style={{width:20,height:20,borderRadius:"50%",background:"#fff",position:"absolute",top:3,left:cfg.nightSilent?25:3,transition:"left 0.2s",boxShadow:"0 1px 4px rgba(0,0,0,0.3)"}}/>
+          </button>
         </div>
       </div>
 

@@ -653,7 +653,10 @@ function getCompanionConfig(){
   }catch{return COMPANION_DEFAULTS;}
 }
 function setCompanionConfig(cfg){
-  try{localStorage.setItem(COMPANION_KEY,JSON.stringify(cfg));}catch{}
+  try{
+    localStorage.setItem(COMPANION_KEY,JSON.stringify(cfg));
+    window.dispatchEvent(new CustomEvent("tlk-companion-changed",{detail:cfg}));
+  }catch{}
 }
 function isInNightSilent(){
   const cfg=getCompanionConfig();
@@ -5750,6 +5753,13 @@ function FloatingOrb({tasks,setTasks,projects,cats,catOf,tags,journals,history,t
   const[cfg,setCfg]=useState(()=>getCompanionConfig());
   const[briefings,setBriefings]=useState(()=>getBriefings().filter(b=>!b.read&&!b.dismissed));
   const[pos,setPos]=useState({x:typeof window!=="undefined"?window.innerWidth-100:1000,y:typeof window!=="undefined"?window.innerHeight-120:600});
+  
+  // 监听 companion 配置变化（设置面板改了立即反应）
+  useEffect(()=>{
+    const handler=()=>setCfg(getCompanionConfig());
+    window.addEventListener("tlk-companion-changed",handler);
+    return()=>window.removeEventListener("tlk-companion-changed",handler);
+  },[]);
   const[state,setState]=useState("idle"); // idle/excited/shy/listening/thinking/speaking
   const[caption,setCaption]=useState("");
   const speakCtrlRef=useRef(null);
@@ -5852,15 +5862,38 @@ function FloatingOrb({tasks,setTasks,projects,cats,catOf,tags,journals,history,t
 
   // ─── 朗读 ───
   const speak=async(text)=>{
-    if(!cfg.voiceEnabled)return;
-    if(speakCtrlRef.current)speakCtrlRef.current.stop();
-    setState("speaking");setCaption(text);
+    const liveCfg=getCompanionConfig();
+    if(!liveCfg.voiceEnabled)return;
+    // 先清掉上一次（同步）
+    if(speakCtrlRef.current){
+      try{speakCtrlRef.current.stop();}catch{}
+      speakCtrlRef.current=null;
+    }
+    setState("speaking");
+    setCaption(text);
     return new Promise((resolve)=>{
-      speakBriefing(text,cfg.voiceProfile,{
-        volume:cfg.volume,
+      let resolved=false;
+      const safeResolve=(r)=>{if(!resolved){resolved=true;resolve(r);}};
+      speakBriefing(text,liveCfg.voiceProfile,{
+        volume:liveCfg.volume,
         onProgress:(p)=>setCaption(p.full),
-        onEnd:()=>{setState("idle");setTimeout(()=>setCaption(""),2000);resolve();},
-      }).then(ctrl=>{speakCtrlRef.current=ctrl;});
+        onEnd:()=>{
+          speakCtrlRef.current=null;
+          setState("idle");
+          setTimeout(()=>setCaption(""),2500);
+          safeResolve();
+        },
+      }).then(ctrl=>{
+        if(ctrl){speakCtrlRef.current=ctrl;}
+        else{
+          // 兜底：speakBriefing 返回 null，定时回 idle
+          setTimeout(()=>{setState("idle");setCaption("");safeResolve();},Math.min(6000,Math.max(2000,text.length*100)));
+        }
+      }).catch(e=>{
+        console.warn("[Linek speak]",e);
+        setState("idle");setCaption("");
+        safeResolve();
+      });
     });
   };
   
@@ -5902,7 +5935,7 @@ function FloatingOrb({tasks,setTasks,projects,cats,catOf,tags,journals,history,t
   // ─── 处理用户语音 — 完整 AI 工具链 + 写入聊天历史 ───
   const processUserSpeech=async(userText)=>{
     setState("thinking");
-    setCaption("💭 「"+userText+"」");
+    setCaption(""); // 不显示思考字幕，光球状态本身就是反馈
     
     // 写入聊天历史（用户消息）
     appendToChatHistory({role:"user",content:userText,ts:Date.now(),source:"voice"});
@@ -5967,11 +6000,11 @@ function FloatingOrb({tasks,setTasks,projects,cats,catOf,tags,journals,history,t
       };
       
       const result=await callAssistantWithTools(apiMsgs,handlers,(progress)=>{
+        // 思考过程不显示字幕，避免抖动；只在工具调用时短暂提示
         if(progress.type==="tool_call"){
-          setCaption(`🔧 ${progress.name}...`);
-        }else if(progress.type==="content_delta"){
-          setCaption(progress.full||userText);
+          setCaption(`🔧 ${progress.name}`);
         }
+        // content_delta 不再实时显示，等最终结果一次性展示
       });
       
       const replyText=(result.content||"嗯，我听到了").trim();
@@ -9368,38 +9401,20 @@ function RangeReview({th,tasks,history,catOf,today,days,label}){
   const start=addDays(today,-(days-1));
   const dates=[];for(let i=0;i<days;i++)dates.push(addDays(start,i));
   
-  // ─── 严格去重：按 task id ，tasks 优先 ───
-  const seen=new Map();
-  
-  // 1. 全部 tasks 中 due 或 dueEnd 落在范围内的（最新实时状态）
-  tasks.forEach(t=>{
-    if(!t||t.id==null||!t.due)return;
+  // ─── 唯一真相源：tasks 数组 ───
+  // 不再用 history（避免每日快照重复计数）
+  const inRange=tasks.filter(t=>{
+    if(!t||t.id==null||!t.due)return false;
     const dueIn=t.due>=start&&t.due<=today;
     const endIn=t.dueEnd&&t.dueEnd>=start&&t.dueEnd<=today;
     const spanCover=t.dueEnd&&t.due<=today&&t.dueEnd>=start;
-    if(!dueIn&&!endIn&&!spanCover)return;
-    // 归属日：完成任务用 completedAt，未完成用 due
-    const attribDate=(t.done&&t.completedAt&&t.completedAt>=start&&t.completedAt<=today)?t.completedAt:t.due;
-    seen.set(String(t.id),{...t,_d:attribDate});
+    return dueIn||endIn||spanCover;
   });
   
-  // 2. history 里在范围内、且 tasks 没有的（已删除）— 单独按"完成日"归类
-  const histInRange=(history||[]).filter(h=>h.date>=start&&h.date<=today);
-  histInRange.forEach(h=>{
-    (h.tasks||[]).forEach(t=>{
-      if(!t||t.id==null)return;
-      const sid=String(t.id);
-      if(seen.has(sid))return; // 实时数据优先
-      // history 任务的归属日就是该 history 的日期
-      seen.set(sid,{...t,_d:h.date});
-    });
-  });
-  
-  // ─── 累计统计 ───
-  let totalDone=0,totalDur=0,totalCount=0;
+  let totalDone=0,totalDur=0;
+  const totalCount=inRange.length;
   const catStats={};
-  seen.forEach(t=>{
-    totalCount++;
+  inRange.forEach(t=>{
     if(t.done){
       totalDone++;
       totalDur+=parseInt(t.actualMin)||0;
@@ -9413,11 +9428,9 @@ function RangeReview({th,tasks,history,catOf,today,days,label}){
     }
   });
   
-  // ─── 每日完成趋势：按 task._d 分组 ───
+  // 每日完成趋势：用 completedAt 归属日
   const dailyDone=dates.map(d=>{
-    let n=0;
-    seen.forEach(t=>{if(t._d===d&&t.done)n++;});
-    return n;
+    return inRange.filter(t=>t.done&&(t.completedAt||t.due)===d).length;
   });
   const maxDaily=Math.max(...dailyDone,1);
   return(
